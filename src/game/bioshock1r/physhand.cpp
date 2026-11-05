@@ -62,6 +62,7 @@ std::atomic<bool> g_enabled{false};
 std::atomic<bool> g_forceOff{false};
 bool g_nearPending = false;
 bool g_nearLooseOnly = false;
+bool g_parked = false; // test control: the body stays live but far below the level
 
 void* g_havok = nullptr; // the level's Havok wrapper, re-read each frame
 void* g_world = nullptr;
@@ -416,6 +417,7 @@ void on_frame(const GamePose& gp, int hand) {
     }
     if (g_watchUntilMs) watch_tick(pos);
     bool sweeping = sweep_target(pos);
+    if (g_parked) pos[2] -= 200.0f;
     memcpy(g_lastTarget, pos, sizeof g_lastTarget);
 
     std::string key = hand == 0 ? kHandCollider.key : aim::weapon_key();
@@ -506,6 +508,9 @@ void handle_command(const char* args) {
     } else if (strncmp(args, "near", 4) == 0) {
         g_nearPending = true;
         g_nearLooseOnly = strstr(args, "loose") != nullptr;
+    } else if (strncmp(args, "park", 4) == 0) {
+        g_parked = strstr(args, "on") != nullptr;
+        BVR_LOG("[phys] parked %s", g_parked ? "on" : "off");
     } else if (strncmp(args, "watch", 5) == 0) {
         g_watchUntilMs = GetTickCount64() + 6000;
         BVR_LOG("[phys] watching projectiles for 6 s");

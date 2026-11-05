@@ -36,8 +36,17 @@ struct Objects {
     void* viewport = nullptr;
 };
 
+// A guarded read, not VirtualQuery: this chain runs every frame and those seven
+// system calls were 3% of the game thread.
 bool valid_ptr(const void* p) {
-    return p && bvr::pattern_scan::is_memory_valid(p, sizeof(void*));
+    if (!p) return false;
+    __try {
+        volatile uint32_t v = *static_cast<const volatile uint32_t*>(p);
+        (void)v;
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
 }
 
 // Re-resolved every frame: the client/viewport are heap objects that die on
