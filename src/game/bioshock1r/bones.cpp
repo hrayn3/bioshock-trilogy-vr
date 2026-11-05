@@ -19,8 +19,10 @@
 
 #include "core/gfx/frame_inspector.h"
 #include "core/gfx/hud_capture.h" // backbuffer_dims: the lens laws are aspect-parameterised
+#include "core/input/xinput_bridge.h"
 #include "core/util/log.h"
 #include "core/vr/openxr_runtime.h" // cine_drive/name for the vrbones status residue line
+#include "game/bioshock1r/aim.h"
 #include "game/bioshock1r/camera.h"
 #include "game/bioshock1r/hands.h"
 #include "game/bioshock1r/patterns.h"
@@ -96,6 +98,22 @@ constexpr float kSwayAngThreshDeg = 12.0f;
 // crossing so the freeze lands on the SETTLED pose, not the last big frame.
 constexpr uint64_t kSwaySettleMs = 600;
 uint64_t g_lastBigDeltaMs = 0;
+
+// Melee hold (`vrbones meleehold on|off`, default ON): the player's hand IS the
+// swing, so the wrench's authored attack must not fight it. The engine still
+// plays the animation - its notify is what opens the damage phantom - and only
+// the pose we adopt is held. Starts on any wrench trigger pull, which covers the
+// swing gesture too because that composes as a trigger. Ends when the engine's
+// pose has left the held one and come back, so the hand cannot snap, and the
+// ceiling ends a pull the game ignored (no animation ever departs).
+std::atomic<bool> g_meleeHold{true};
+constexpr uint64_t kMeleeHoldMinMs = 150; // since the last pull
+constexpr uint64_t kMeleeHoldMaxMs = 1500;
+bool g_holdOn = false;
+bool g_holdDeparted = false;
+uint64_t g_holdPullMs = 0;
+float g_holdPeakPos = 0.0f, g_holdPeakAng = 0.0f;
+std::atomic<uint32_t> g_holds{0};
 // Telemetry (1 Hz while frozen): the probe deltas the threshold judges, so
 // the thresholds are set from measured idle amplitude, not guesses.
 uint64_t g_lastSwayTlmMs = 0;
@@ -385,6 +403,66 @@ void set_dirty(uint8_t v) {
 }
 
 // ---- quat helpers over the Qts layout ---------------------------------------
+
+// How far an evaluated pose sits from the reference, on the two bones that
+// carry a real animation.
+void pose_delta(const Qts* fresh, float* maxPos, float* maxAng) {
+    static const int kProbe[2] = {patterns::kBoneLWrist, patterns::kBoneWeaponAttach};
+    for (int k = 0; k < 2; ++k) {
+        int b = kProbe[k];
+        if (b >= g_boneCount) continue;
+        float dp[3] = {fresh[b].p[0] - g_ref[b].p[0], fresh[b].p[1] - g_ref[b].p[1],
+                       fresh[b].p[2] - g_ref[b].p[2]};
+        float dot = fresh[b].q[0] * g_ref[b].q[0] + fresh[b].q[1] * g_ref[b].q[1] +
+                    fresh[b].q[2] * g_ref[b].q[2] + fresh[b].q[3] * g_ref[b].q[3];
+        if (dot < 0.0f) dot = -dot;
+        if (dot > 1.0f) dot = 1.0f;
+        float angDeg = 2.0f * acosf(dot) * kRadToDeg;
+        float posUu = sqrtf(dp[0] * dp[0] + dp[1] * dp[1] + dp[2] * dp[2]);
+        if (posUu > *maxPos) *maxPos = posUu;
+        if (angDeg > *maxAng) *maxAng = angDeg;
+    }
+}
+
+void melee_hold_end(const char* why) {
+    if (!g_holdOn) return;
+    g_holdOn = false;
+    BVR_LOG("[bones] melee hold ended (%s): engine pose peaked %.1f UU / %.1f deg away", why,
+            g_holdPeakPos, g_holdPeakAng);
+}
+
+void melee_hold_tick() {
+    bool wrench = aim::weapon_key_is("Wrench");
+    if (!g_meleeHold.load(std::memory_order_relaxed) || !wrench) {
+        melee_hold_end("not the wrench");
+        return;
+    }
+    uint8_t lt = 0, rt = 0;
+    bvr::input::last_composed_triggers(&lt, &rt);
+    if (rt < 64) return;
+    if (!g_holdOn) {
+        g_holdOn = true;
+        g_holdDeparted = false;
+        g_holdPeakPos = g_holdPeakAng = 0.0f;
+        g_holds.fetch_add(1, std::memory_order_relaxed);
+    }
+    g_holdPullMs = GetTickCount64();
+}
+
+void melee_hold_observe(const Qts* fresh) {
+    if (!g_holdOn || !g_refValid) return;
+    float dPos = 0.0f, dAng = 0.0f;
+    pose_delta(fresh, &dPos, &dAng);
+    if (dPos > g_holdPeakPos) g_holdPeakPos = dPos;
+    if (dAng > g_holdPeakAng) g_holdPeakAng = dAng;
+    bool away = dPos > kSwayPosThreshUu || dAng > kSwayAngThreshDeg;
+    if (away) g_holdDeparted = true;
+    uint64_t since = GetTickCount64() - g_holdPullMs;
+    if (g_holdDeparted && !away && since >= kMeleeHoldMinMs)
+        melee_hold_end("animation finished");
+    else if (since >= kMeleeHoldMaxMs)
+        melee_hold_end(g_holdDeparted ? "ceiling, animation still running" : "no animation");
+}
 
 void qts_rotate(const float q[4], const float v[3], float out[3]) {
     quat_rotate(q[0], q[1], q[2], q[3], v, out);
@@ -829,6 +907,7 @@ void on_world_change() {
     // sleeve bones back from a dead world's reference.
     g_wasCollapsed = false;
     g_collapsedHand = -1;
+    g_holdOn = false;
     memset(g_scaleWrote, 0, sizeof g_scaleWrote); // scale writes died with it
     // The weapon skeleton died with the world too - drop WITHOUT writing
     // (wskel_intact re-resolves through the dead actor and fails, so
@@ -1033,6 +1112,7 @@ bool drive(const FrameContext& ctx, void* handsActor, const GamePose& gp, int ha
     }
 
     if (!handsActor || !locate(handsActor)) return false;
+    melee_hold_tick();
 
     int first = 0, last = 0, anchor = 0;
     cluster_of(hand, &first, &last, &anchor);
@@ -1064,26 +1144,13 @@ bool drive(const FrameContext& ctx, void* handsActor, const GamePose& gp, int ha
         Qts fresh[kMaxBones];
         if (!read_n(g_bones, fresh, sizeof(Qts) * static_cast<size_t>(g_boneCount)))
             return false;
-        bool adopt = true;
-        if (g_refValid && g_swayKill.load(std::memory_order_relaxed)) {
+        melee_hold_observe(fresh);
+        bool adopt = !g_holdOn;
+        if (!g_holdOn && g_refValid && g_swayKill.load(std::memory_order_relaxed)) {
             adopt = false;
             uint64_t nowMs = GetTickCount64();
             float maxPos = 0.0f, maxAng = 0.0f;
-            static const int kProbe[2] = {patterns::kBoneLWrist, patterns::kBoneWeaponAttach};
-            for (int k = 0; k < 2; ++k) {
-                int b = kProbe[k];
-                if (b >= g_boneCount) continue;
-                float dp[3] = {fresh[b].p[0] - g_ref[b].p[0], fresh[b].p[1] - g_ref[b].p[1],
-                               fresh[b].p[2] - g_ref[b].p[2]};
-                float dot = fresh[b].q[0] * g_ref[b].q[0] + fresh[b].q[1] * g_ref[b].q[1] +
-                            fresh[b].q[2] * g_ref[b].q[2] + fresh[b].q[3] * g_ref[b].q[3];
-                if (dot < 0.0f) dot = -dot;
-                if (dot > 1.0f) dot = 1.0f;
-                float angDeg = 2.0f * acosf(dot) * kRadToDeg;
-                float posUu = sqrtf(dp[0] * dp[0] + dp[1] * dp[1] + dp[2] * dp[2]);
-                if (posUu > maxPos) maxPos = posUu;
-                if (angDeg > maxAng) maxAng = angDeg;
-            }
+            pose_delta(fresh, &maxPos, &maxAng);
             if (maxPos > kSwayPosThreshUu || maxAng > kSwayAngThreshDeg)
                 g_lastBigDeltaMs = nowMs;
             // Track through the animation AND a settle window past its last
@@ -1404,6 +1471,14 @@ void handle_command(const char* args) {
     const char* rest = args + consumed;
     while (*rest == ' ' || *rest == '\t') ++rest;
 
+    if (strcmp(verb, "meleehold") == 0) {
+        if (strncmp(rest, "on", 2) == 0) g_meleeHold.store(true, std::memory_order_relaxed);
+        else if (strncmp(rest, "off", 3) == 0) g_meleeHold.store(false, std::memory_order_relaxed);
+        BVR_LOG("[bones] melee hold %s, %u holds so far",
+                g_meleeHold.load(std::memory_order_relaxed) ? "ON" : "off",
+                g_holds.load(std::memory_order_relaxed));
+        return;
+    }
     if (strcmp(verb, "status") == 0) {
         BVR_LOG("[bones] inst=%p bones=%p count=%d writes=%u lastHand=%d refValid=%d "
                 "collapse=%d hideinactive=%d hiddenHand=%d",
