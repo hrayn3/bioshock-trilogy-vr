@@ -23,7 +23,7 @@ constexpr float kHkPerMetre = 2.0f;  // 100 UU per metre
 constexpr float kMaxStepHk = 0.5f;   // 25 cm a frame, about 11 m/s at 45 fps
 constexpr float kWarpHk = 3.0f;      // 1.5 m: a load or recenter, not a hand
 constexpr uint32_t kFilterInfo = (1u << 16) | 5u; // group 1, layer 5
-constexpr uint64_t kSettleMs = 800;  // the equip animation moves the reference
+constexpr uint64_t kSettleMs = 2000; // the equip animation moves the reference
 
 // Thiscall targets, called as fastcall: ecx is `self`, edx is unused, the
 // callee pops the rest either way.
@@ -60,6 +60,7 @@ const float kFwd[3] = {1.0f, 0.0f, 0.0f};
 const uint8_t* g_base = nullptr;
 std::atomic<bool> g_enabled{false};
 std::atomic<bool> g_forceOff{false};
+bool g_nearPending = false;
 
 void* g_havok = nullptr; // the level's Havok wrapper, re-read each frame
 void* g_world = nullptr;
@@ -191,71 +192,130 @@ const Collider& collider_for(const std::string& key) {
     return kDefaultCollider;
 }
 
-// `vrphys near`: actors close to the hand, then any movement of them, so "the
-// hand moved a prop" is a log line rather than a screenshot comparison.
+// `vrphys near`: Havok's own body lists, so props are found whatever actor class
+// owns them. hkpSimulationIsland carries no reflection data, so its entity array
+// is found by shape: a pointer and count whose first element is a rigid body.
 struct Tracked {
-    void* obj;
-    float loc[3];
+    void* body;
+    float pos[3];
 };
-constexpr int kMaxTracked = 24;
+constexpr int kMaxTracked = 32;
+constexpr float kNearHk = 16.0f; // 8 m
+constexpr uint32_t kWorldActiveIslandsOffset = 0x28;
+constexpr uint32_t kWorldInactiveIslandsOffset = 0x34;
+constexpr uint32_t kBodyVtableRva = 0xBFDD64;
+constexpr uint32_t kBodyFilterOffset = 0x2C;
+constexpr uint32_t kBodyMotionTypeOffset = 0xE8;
 Tracked g_tracked[kMaxTracked];
 int g_trackedCount = 0;
-bool g_nearScan = false;
-patterns::ObjectScan g_scan;
 uint64_t g_lastTrackMs = 0;
 
-bool accept_near(void* obj, void* user, int32_t probe[bvr::heap_scan::kProbeSlots]) {
-    const float* hand = static_cast<const float*>(user);
-    float loc[3];
-    memcpy(loc, static_cast<uint8_t*>(obj) + patterns::kActorLocOffset, sizeof loc);
-    float d[3] = {loc[0] - hand[0], loc[1] - hand[1], loc[2] - hand[2]};
-    float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-    probe[0] = static_cast<int32_t>(dist);
-    if (dist < 1500.0f && g_trackedCount < kMaxTracked) {
-        g_tracked[g_trackedCount].obj = obj;
-        memcpy(g_tracked[g_trackedCount].loc, loc, sizeof loc);
-        ++g_trackedCount;
-        const wchar_t* name = patterns::object_class_name(obj);
-        BVR_LOG("[phys] near %p %ls at (%.0f %.0f %.0f), %.0f UU from the hand", obj,
-                name ? name : L"?", loc[0], loc[1], loc[2], dist);
-    }
-    return false; // keep sweeping
-}
+struct Sweep {
+    int index = -1;
+    uint64_t startMs = 0;
+} g_sweep;
+constexpr uint64_t kSweepMs = 1200;
+constexpr float kSweepHalfHk = 1.0f; // 50 cm either side
 
-bool read_loc(void* obj, float loc[3]) {
+bool read_pos(void* body, float pos[3]) {
     __try {
-        memcpy(loc, static_cast<uint8_t*>(obj) + patterns::kActorLocOffset, 12);
+        memcpy(pos, static_cast<uint8_t*>(body) + patterns::kHkBodyPosOffset, 12);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
 }
 
-void track_tick(const float hand[3]) {
-    if (g_nearScan) {
-        patterns::ScanResult r{};
-        if (patterns::run_object_scan(g_scan, patterns::kHavokActorVtableRva,
-                                      patterns::kActorLocOffset + 12, &accept_near,
-                                      const_cast<float*>(hand), r)) {
-            g_nearScan = false;
-            BVR_LOG("[phys] near scan done: %d tracked", g_trackedCount);
+int walk_island(void* island, const float hand[3]) {
+    int added = 0;
+    __try {
+        const uint8_t* o = static_cast<const uint8_t*>(island);
+        for (uint32_t off = 0x08; off < 0x80; off += 4) {
+            void** data = *reinterpret_cast<void** const*>(o + off);
+            int count = *reinterpret_cast<const int*>(o + off + 4);
+            if (!data || count <= 0 || count > 4096 ||
+                reinterpret_cast<uintptr_t>(data) < 0x10000)
+                continue;
+            if (!vtable_is(data[0], kBodyVtableRva)) continue;
+            for (int i = 0; i < count && g_trackedCount < kMaxTracked; ++i) {
+                void* b = data[i];
+                if (!vtable_is(b, kBodyVtableRva) || b == g_body) continue;
+                float p[3];
+                if (!read_pos(b, p)) continue;
+                float d[3] = {p[0] - hand[0], p[1] - hand[1], p[2] - hand[2]};
+                float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                if (dist > kNearHk) continue;
+                uint32_t filter = *reinterpret_cast<const uint32_t*>(
+                    static_cast<uint8_t*>(b) + kBodyFilterOffset);
+                uint8_t motion =
+                    *(static_cast<uint8_t*>(b) + kBodyMotionTypeOffset);
+                g_tracked[g_trackedCount].body = b;
+                memcpy(g_tracked[g_trackedCount].pos, p, 12);
+                BVR_LOG("[phys] near #%d body %p layer=%u group=%u motion=%u at %.2f m "
+                        "(hk %.2f %.2f %.2f)",
+                        g_trackedCount, b, filter & 31, filter >> 16, motion, dist * 0.5f, p[0],
+                        p[1], p[2]);
+                ++g_trackedCount;
+                ++added;
+            }
+            break;
         }
-        return;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
+    return added;
+}
+
+int walk_islands(uint32_t arrayOffset, const float hand[3]) {
+    int added = 0;
+    __try {
+        const uint8_t* w = static_cast<const uint8_t*>(g_world);
+        void** islands = *reinterpret_cast<void** const*>(w + arrayOffset);
+        int n = *reinterpret_cast<const int*>(w + arrayOffset + 4);
+        for (int i = 0; i < n && i < 512; ++i) added += walk_island(islands[i], hand);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return added;
+}
+
+void near_scan(const float handHk[3]) {
+    g_trackedCount = 0;
+    int active = walk_islands(kWorldActiveIslandsOffset, handHk);
+    int asleep = walk_islands(kWorldInactiveIslandsOffset, handHk);
+    BVR_LOG("[phys] near: %d awake, %d asleep within %.0f m", active, asleep, kNearHk * 0.5f);
+}
+
+void track_tick() {
     uint64_t now = GetTickCount64();
-    if (!g_trackedCount || now - g_lastTrackMs < 500) return;
+    if (!g_trackedCount || now - g_lastTrackMs < 250) return;
     g_lastTrackMs = now;
     for (int i = 0; i < g_trackedCount; ++i) {
-        float loc[3];
-        if (!read_loc(g_tracked[i].obj, loc)) continue;
-        float d[3] = {loc[0] - g_tracked[i].loc[0], loc[1] - g_tracked[i].loc[1],
-                      loc[2] - g_tracked[i].loc[2]};
+        float p[3];
+        if (!read_pos(g_tracked[i].body, p)) continue;
+        float d[3] = {p[0] - g_tracked[i].pos[0], p[1] - g_tracked[i].pos[1],
+                      p[2] - g_tracked[i].pos[2]};
         float moved = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-        if (moved < 0.5f) continue;
-        BVR_LOG("[phys] MOVED %p by %.1f UU to (%.0f %.0f %.0f)", g_tracked[i].obj, moved, loc[0],
-                loc[1], loc[2]);
-        memcpy(g_tracked[i].loc, loc, sizeof loc);
+        if (moved < 0.02f) continue;
+        BVR_LOG("[phys] MOVED #%d by %.1f cm", i, moved * 50.0f);
+        memcpy(g_tracked[i].pos, p, 12);
     }
+}
+
+// Debug override: drive the body straight through a tracked prop.
+bool sweep_target(float pos[4]) {
+    if (g_sweep.index < 0 || g_sweep.index >= g_trackedCount) return false;
+    uint64_t t = GetTickCount64() - g_sweep.startMs;
+    if (t >= kSweepMs) {
+        BVR_LOG("[phys] sweep #%d done", g_sweep.index);
+        g_sweep.index = -1;
+        return false;
+    }
+    float p[3];
+    if (!read_pos(g_tracked[g_sweep.index].body, p)) return false;
+    float f = static_cast<float>(t) / kSweepMs * 2.0f - 1.0f;
+    pos[0] = p[0] + f * kSweepHalfHk;
+    pos[1] = p[1];
+    pos[2] = p[2];
+    return true;
 }
 
 void log_status() {
@@ -285,7 +345,8 @@ void on_world_change() {
     g_havok = nullptr;
     g_builtKey.clear();
     g_trackedCount = 0;
-    g_nearScan = false;
+    g_sweep.index = -1;
+    g_keyChangeMs = GetTickCount64(); // a load plays the equip animation
 }
 
 void on_frame(const GamePose& gp, int hand) {
@@ -319,12 +380,16 @@ void on_frame(const GamePose& gp, int hand) {
         critical != 0)
         return; // Havok would defer our call
 
-    float cloc[3] = {gp.loc.x, gp.loc.y, gp.loc.z};
-    track_tick(cloc);
+    track_tick();
 
     alignas(16) float pos[4] = {gp.loc.x * kHkPerUu, gp.loc.y * kHkPerUu, gp.loc.z * kHkPerUu, 0};
     alignas(16) float quat[4];
     ue_rot_to_quat(gp.rot, quat);
+    if (g_nearPending) {
+        g_nearPending = false;
+        near_scan(pos);
+    }
+    bool sweeping = sweep_target(pos);
     memcpy(g_lastTarget, pos, sizeof g_lastTarget);
 
     std::string key = hand == 0 ? kHandCollider.key : aim::weapon_key();
@@ -387,7 +452,7 @@ void on_frame(const GamePose& gp, int hand) {
     bool warp = len > kWarpHk;
     if (warp) {
         ++g_warps;
-    } else if (len > kMaxStepHk) {
+    } else if (len > kMaxStepHk && !sweeping) {
         ++g_clamps;
         float k = kMaxStepHk / len;
         for (int i = 0; i < 3; ++i) pos[i] = cur[i] + d[i] * k;
@@ -413,9 +478,13 @@ void handle_command(const char* args) {
         g_builtKey.clear();
         BVR_LOG("[phys] off");
     } else if (strncmp(args, "near", 4) == 0) {
-        g_trackedCount = 0;
-        g_nearScan = true;
-        BVR_LOG("[phys] near scan started");
+        g_nearPending = true;
+    } else if (strncmp(args, "sweep", 5) == 0) {
+        int index = 0;
+        sscanf_s(args + 5, "%d", &index);
+        g_sweep.index = index;
+        g_sweep.startMs = GetTickCount64();
+        BVR_LOG("[phys] sweeping through #%d", index);
     } else {
         log_status();
     }

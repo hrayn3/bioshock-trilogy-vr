@@ -83,6 +83,9 @@ bool accept_user_settings(void* obj, void*, int32_t probe[bvr::heap_scan::kProbe
 // value that cannot be derived stays unusable rather than falling back to the
 // Steam number, and every code target must pass a shape check before hooking.
 
+// The exact exe is recognised, so the slot needs no proving on every use. That
+// proof is a VirtualQuery, and it cost 6% of the game thread at this call rate.
+bool g_engineKnown = false;
 bool g_gnamesBound = true; // only an unrecognised build has to look for it
 
 bool rebind_vtable(const bvr::pattern_scan::ProcessImage& image, const char* mangled,
@@ -114,6 +117,8 @@ void rebind_vtables(const bvr::pattern_scan::ProcessImage& image) {
 }
 
 void apply_gog_addresses() {
+    kGameEnginePtrRva = 0x12F1424;
+    kGNamesDataRva = 0x1303C94;
     kRenderFlushRva = 0x400BA0;
     kDrainRva = 0x4006C0;
     kPumpLoopRva = 0x400C60;
@@ -547,6 +552,8 @@ bool resolve(const bvr::pattern_scan::ProcessImage& image, Symbols& out) {
         rebind_vtables(image);
         if (host.timeDateStamp == kGogTimeDateStamp && host.fileBytes == kGogFileBytes) {
             apply_gog_addresses();
+            g_engineKnown = true;
+            g_gnamesBound = true;
             BVR_LOG("[b1r] GOG build recognised - render address table applied");
         }
     }
@@ -668,7 +675,7 @@ void resolve_aim_natives(const bvr::pattern_scan::ProcessImage& image, Symbols& 
 
 bool engine_ptr_ready() {
     if (!g_imageBase) return false;
-    if (g_rvaTrusted) return true;
+    if (g_rvaTrusted || g_engineKnown) return true;
     if (g_enginePtrBound) {
         // A slot can pass at the menu and die at the first level load, so an
         // unrecognised build proves it again on every use.
