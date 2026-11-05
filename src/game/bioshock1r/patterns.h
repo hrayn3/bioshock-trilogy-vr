@@ -27,6 +27,11 @@ inline constexpr uint32_t kHostTimeDateStamp = 0x6256F776;
 inline constexpr uint32_t kHostSizeOfImage = 0x01677000;
 inline constexpr uint64_t kHostFileBytes = 21214720;
 
+// The GOG build is a separate compile. Its render addresses are a table, not a
+// shift from Steam's: docs/bioshock1/BUILD_PORTING.md has how each was found.
+inline constexpr uint32_t kGogTimeDateStamp = 0x5BBD3A7A;
+inline constexpr uint64_t kGogFileBytes = 21700512;
+
 // False when the running exe is not the build the addresses came from. Features
 // that depend on a raw RVA must stand down; anything pattern-derived (the
 // CalcView seam, the FName chain) is build-independent and keeps working.
@@ -92,18 +97,18 @@ inline constexpr int kScanMissesBeforeDormant = 3;
 // 0x61D1D0 (frameless `push esi` prologue - session 4's CC-55-8B-EC
 // prologue walk overshot it into 0x61D0F0). All void __thiscall, zero stack
 // args; the flush never reads its ECX.
-inline constexpr uint32_t kRenderFlushRva = 0x61D0F0; // flush/join, NOT per-frame
-inline constexpr uint32_t kDrainRva = 0x61CAE0;       // per-frame render entry
-inline constexpr uint32_t kPumpLoopRva = 0x61D1D0;    // render-thread main loop
+inline uint32_t kRenderFlushRva = 0x61D0F0; // flush/join, NOT per-frame
+inline uint32_t kDrainRva = 0x61CAE0;       // per-frame render entry
+inline uint32_t kPumpLoopRva = 0x61D1D0;    // render-thread main loop
 // Pump-loop internals (session-5 byte walk + live import resolution): it
 // registers GetCurrentThreadId() into the global below, then loops
 // WaitForSingleObject(INFINITE) -> drain -> SetEvent. [queue+0x58] != 0 is
 // the pump-loop EXIT condition (not a per-frame latch).
-inline constexpr uint32_t kRenderTidGlobalRva = 0x13784E4;
+inline uint32_t kRenderTidGlobalRva = 0x13784E4;
 // Static render-manager global (loaded via A1 in the flush prologue):
 // [mgr+4] = command-queue object (queue vtable RVA 0xE0DFD0, mgr vtable
 // 0xE1CF14, both live session 5); the flush stamps [mgr+0x58] = 1.
-inline constexpr uint32_t kRenderMgrGlobalRva = 0x1356590;
+inline uint32_t kRenderMgrGlobalRva = 0x1356590;
 inline constexpr uint32_t kQueueDrainGuardOffset = 0x58; // pump exit flag
 // Expected first bytes (build-identity check before patching a prologue).
 inline constexpr uint8_t kRenderFlushPrologue[5] = {0x55, 0x8B, 0xEC, 0x51, 0xA1};
@@ -119,8 +124,8 @@ inline constexpr uint8_t kDrainPrologue[5] = {0x55, 0x8B, 0xEC, 0x6A, 0xFF};
 // disk-image byte walk confirmed: arg2 IS the FRotator* (3 dwords copied to
 // the frame block +0x14), ECX is dead at entry (`push ecx` = stack alloc),
 // literal `C2 0C 00` ret, SetEvent call site 0x585C62 / ret RVA 0x585C68.
-inline constexpr uint32_t kFrameSubmitRva = 0x585AC0;
-inline constexpr uint8_t kFrameSubmitPrologue[10] = {0x55, 0x8B, 0xEC, 0x51,
+inline uint32_t kFrameSubmitRva = 0x585AC0;
+inline uint8_t kFrameSubmitPrologue[10] = {0x55, 0x8B, 0xEC, 0x51,
                                                      0x64, 0xA1, 0x2C, 0x00,
                                                      0x00, 0x00};
 
@@ -141,14 +146,19 @@ inline constexpr uint8_t kFrameSubmitPrologue[10] = {0x55, 0x8B, 0xEC, 0x51,
 // absorbed (presents did not double, yawed camera never rendered): the view
 // data is baked into the queue during THIS function, so SequentialReentry
 // must re-enter here.
-inline constexpr uint32_t kSceneBuildRva = 0x4CCE70;
+inline uint32_t kSceneBuildRva = 0x4CCE70;
 // The STEADY-STATE GAMEPLAY caller's return RVA for the scene build (live
 // hook telemetry, sessions 6-7). Loads/transitions call the build from other
 // sites; pass 2 doubles ONLY gameplay-caller builds - doubling (or any 1t
 // inline-forcing) during a level load is the 2026-07-24 19:54 loader-thread
 // crash (ENGINE_NOTES "1t load hazard").
-inline constexpr uint32_t kSceneBuildGameplayRetRva = 0x850EF0;
-inline constexpr uint8_t kSceneBuildPrologue[9] = {0x53, 0x8B, 0xDC, 0x83,
+inline uint32_t kSceneBuildGameplayRetRva = 0x850EF0;
+// GOG inlines the Steam caller differently: every Draw returns through
+// UGameViewport::Repaint, so the gate needs the return address above that too.
+// Zero means this build has one gameplay caller and needs no second check.
+inline uint32_t kSceneBuildGameplayOuterRetRva = 0;
+inline uint32_t kFrameSubmitPrologueLen = sizeof kFrameSubmitPrologue;
+inline uint8_t kSceneBuildPrologue[9] = {0x53, 0x8B, 0xDC, 0x83,
                                                    0xEC, 0x08, 0x83, 0xE4,
                                                    0xF0};
 
@@ -164,7 +174,9 @@ inline constexpr uint8_t kSceneBuildPrologue[9] = {0x53, 0x8B, 0xDC, 0x83,
 // wait has a lost-wakeup race (two live hangs, 2026-07-24 session 6), and a
 // bounded poll on these flags cannot lose a wakeup - and with the pipeline
 // drained the racy engine waiter never engages at all.
-inline constexpr uint32_t kFrameIdPairRva = 0x13AF7E8;
+// Zero on a build with no such pair. Stereo there relies on single-threaded
+// render, where nothing can be in flight at the second build.
+inline uint32_t kFrameIdPairRva = 0x13AF7E8;
 inline constexpr uint32_t kFrameIdSecondOffset = 0x10;
 
 // Command-queue state on the scene-build's `this` (the queue object), live
@@ -188,8 +200,8 @@ inline constexpr uint32_t kQueueSegConsOffset = 0x12C;
 // (queue = [[kRenderMgrGlobalRva]]+4). Re-SetEvent-ing these is exactly the
 // wakeup the deadlocked protocol lost; the watchdog verifies the vtable
 // before touching a handle.
-inline constexpr uint32_t kPumpKickEventPtrRva = 0x13566C4;
-inline constexpr uint32_t kEventVtableRva = 0xE2D584;
+inline uint32_t kPumpKickEventPtrRva = 0x13566C4;
+inline uint32_t kEventVtableRva = 0xE2D584;
 inline constexpr uint32_t kQueueEventAOffset = 0xC;
 inline constexpr uint32_t kQueueEventBOffset = 0x10;
 
@@ -200,7 +212,7 @@ inline constexpr uint32_t kQueueEventBOffset = 0x10;
 // is the live THREADED-renderer detector (session 7: used to refuse stereo
 // on the deadlock/crash-prone threaded substrate, and for the mode tag in
 // the reentry heartbeat).
-inline constexpr uint32_t kRenderThreadObjRva = 0x13566CC;
+inline uint32_t kRenderThreadObjRva = 0x13566CC;
 
 // Drain-head layout (session-7 minidump forensics + disk disasm of the head
 // at kDrainRva): after EnterCriticalSection([this+8]+4) the drain loads the
@@ -224,7 +236,7 @@ inline constexpr uint32_t kQueueFrameCtxOffset = 0xC;
 // runtime is the candidate stereo-safe mode.
 // DEAD END (session 6): 500+ references engine-wide (GIsEditor-class);
 // poking it crashed the next level load. Kept for the decision-chain doc.
-inline constexpr uint32_t kForceNonThreadedRenderRva = 0x1375BD4;
+inline uint32_t kForceNonThreadedRenderRva = 0x1375BD4;
 
 // THE render-mode selector pair (session-7 full decode of the flush-point
 // decision chain at 0x61D260; ENGINE_NOTES has the complete chain). The
@@ -255,8 +267,8 @@ inline constexpr uint32_t kForceNonThreadedRenderRva = 0x1375BD4;
 // [[sceneObj+0x3DC]]+0x4C (live: scene vtable 0xE1846C, client obj vtable
 // 0xE127CC, +0x4C == 1) - a per-client "use render thread" bool; zeroing
 // it flips only the render chain but lives in heap object memory.
-inline constexpr uint32_t kNumHwThreadsRva = 0x11B69FC;
-inline constexpr uint32_t kThreadDivisorRva = 0x11B7A00;
+inline uint32_t kNumHwThreadsRva = 0x11B69FC;
+inline uint32_t kThreadDivisorRva = 0x11B7A00;
 
 // The flush-point FUNCTION itself (session-7 decision-chain decode; every
 // byte re-confirmed by a capstone disk walk 2026-07-24 session 8): entry
@@ -271,7 +283,7 @@ inline constexpr uint32_t kThreadDivisorRva = 0x11B7A00;
 // never touched, so its OTHER quotient-family consumers (load-path site
 // 0x4D0E24 - the 19:54 loader crash) see the true core count, and the
 // inline behavior is confined to exactly the per-frame scene flush.
-inline constexpr uint32_t kFlushPointRva = 0x61D260;
+inline uint32_t kFlushPointRva = 0x61D260;
 inline constexpr uint8_t kFlushPointPrologue[7] = {0x55, 0x8B, 0xEC, 0x51,
                                                    0x8B, 0x4D, 0x0C};
 // Render-manager fields the flush-point writes (mgr is also the drain's
@@ -318,8 +330,8 @@ inline constexpr uint32_t kPadConnectedFlagRva = 0x11B7A10; // written by Update
 // before the proxy body runs - so the bridge re-points the ord-2 IAT slot at
 // its own wrapper (previous target kept as passthrough; Steam-served real
 // pads still work). Ord-3 (SetState/vibration) is untouched until M7 haptics.
-inline constexpr uint32_t kXInputGetStateIatRva = 0xBCF8E0;
-inline constexpr uint32_t kXInputSetStateIatRva = 0xBCF8DC;
+inline uint32_t kXInputGetStateIatRva = 0xBCF8E0;
+inline uint32_t kXInputSetStateIatRva = 0xBCF8DC;
 // Exec chain entries (UBOOL __thiscall Exec(const wchar_t* cmd,
 // FOutputDevice& ar), ret 8; found via ParseCommand string clusters + RTTI):
 // UWindowsViewport::Exec handles SETRES/TOGGLEFULLSCREEN/SETMOUSE/...;
@@ -608,9 +620,9 @@ inline constexpr float kFgViewPitchBiasDeg = 1.1f;
 // downstream. The vec3 at PC+0x65C and triple at PC+0x668 read zero live at
 // rest (auxiliary offsets; 75/75/60 fov floats sit just before them at
 // PC+0x648..0x650).
-inline constexpr uint32_t kFgSceneNodeCtorRva = 0x56DC30;
+inline uint32_t kFgSceneNodeCtorRva = 0x56DC30;
 inline constexpr uint8_t kFgSceneNodeCtorPrologue[5] = {0x55, 0x8B, 0xEC, 0x6A, 0xFF};
-inline constexpr uint32_t kFgSceneNodeVtableRva = 0xE1846C; // written by the build after ctor
+inline uint32_t kFgSceneNodeVtableRva = 0xE1846C; // written by the build after ctor
 inline constexpr uint32_t kSceneViewOffset = 0x118;   // parent scene's view block
 inline constexpr uint32_t kSceneFgNodeOffset = 0x1B0; // parentScene -> fg node (per frame)
 inline constexpr uint32_t kScenePcOffset = 0x48;      // parentScene -> PlayerController

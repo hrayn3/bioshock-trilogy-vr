@@ -661,12 +661,14 @@ void maybe_second_submit(void* ecx, void* edx, FVec3* loc, FRot3* rot,
 // Runs at depth 0 only, game thread.
 void maybe_second_build(void* ecx, void* edx, void* a1, void* a2, void* a3,
                         void* a4, uint32_t tid, uint32_t presentDelta,
-                        uint32_t callerRva) {
+                        uint32_t callerRva, uint32_t outerRva) {
     if (g_poisoned.load(std::memory_order_relaxed)) return;
     // Gameplay-caller gate (session 7, 19:54 load crash): loads/transitions
     // run the build from other call sites against half-built world state -
     // never double those. Steady-state gameplay is the only doubling target.
-    if (callerRva != patterns::kSceneBuildGameplayRetRva) {
+    if (callerRva != patterns::kSceneBuildGameplayRetRva ||
+        (patterns::kSceneBuildGameplayOuterRetRva &&
+         outerRva != patterns::kSceneBuildGameplayOuterRetRva)) {
         g_stereoSkips.fetch_add(1, std::memory_order_relaxed);
         return;
     }
@@ -714,32 +716,34 @@ void maybe_second_build(void* ecx, void* edx, void* a1, void* a2, void* a3,
     // checks). Starting pass 2 against a truly idle ring keeps the engine's
     // racy full/empty waits from engaging. Bounded, skip on timeout (render
     // paused/stalled). A poll cannot lose a wakeup.
-    const volatile int32_t* frameA = reinterpret_cast<const volatile int32_t*>(
-        g_imageBase + patterns::kFrameIdPairRva);
-    const volatile int32_t* frameB = reinterpret_cast<const volatile int32_t*>(
-        g_imageBase + patterns::kFrameIdPairRva + patterns::kFrameIdSecondOffset);
-    const volatile uint32_t* ringProd = reinterpret_cast<const volatile uint32_t*>(
-        static_cast<const uint8_t*>(ecx) + patterns::kQueueSegProdOffset);
-    const volatile uint32_t* ringCons = reinterpret_cast<const volatile uint32_t*>(
-        static_cast<const uint8_t*>(ecx) + patterns::kQueueSegConsOffset);
-    LARGE_INTEGER w0, w1;
-    QueryPerformanceCounter(&w0);
-    bool drained = false;
-    for (;;) {
-        if (*frameA < 0 && *frameB < 0 && *ringProd == *ringCons) {
-            drained = true;
-            break;
+    if (patterns::kFrameIdPairRva) {
+        const volatile int32_t* frameA = reinterpret_cast<const volatile int32_t*>(
+            g_imageBase + patterns::kFrameIdPairRva);
+        const volatile int32_t* frameB = reinterpret_cast<const volatile int32_t*>(
+            g_imageBase + patterns::kFrameIdPairRva + patterns::kFrameIdSecondOffset);
+        const volatile uint32_t* ringProd = reinterpret_cast<const volatile uint32_t*>(
+            static_cast<const uint8_t*>(ecx) + patterns::kQueueSegProdOffset);
+        const volatile uint32_t* ringCons = reinterpret_cast<const volatile uint32_t*>(
+            static_cast<const uint8_t*>(ecx) + patterns::kQueueSegConsOffset);
+        LARGE_INTEGER w0, w1;
+        QueryPerformanceCounter(&w0);
+        bool drained = false;
+        for (;;) {
+            if (*frameA < 0 && *frameB < 0 && *ringProd == *ringCons) {
+                drained = true;
+                break;
+            }
+            QueryPerformanceCounter(&w1);
+            if (qpc_us(w0, w1) > 20000) break; // 20 ms: pump is stalled
+            YieldProcessor();
         }
-        QueryPerformanceCounter(&w1);
-        if (qpc_us(w0, w1) > 20000) break; // 20 ms: pump is stalled
-        YieldProcessor();
-    }
-    if (!drained) {
-        g_stereoSkips.fetch_add(1, std::memory_order_relaxed);
-        if (isPulse)
-            BVR_LOG("[reentry] pulse skipped: pipeline never drained "
-                    "(render stalled)");
-        return;
+        if (!drained) {
+            g_stereoSkips.fetch_add(1, std::memory_order_relaxed);
+            if (isPulse)
+                BVR_LOG("[reentry] pulse skipped: pipeline never drained "
+                        "(render stalled)");
+            return;
+        }
     }
 
     uint32_t presentsBefore =
@@ -788,6 +792,15 @@ void __fastcall BuildDetour(void* ecx, void* edx, void* a1, void* a2, void* a3,
     uint32_t n = g_buildEntries.fetch_add(1, std::memory_order_relaxed) + 1;
     uint32_t callerRva = to_rva(_ReturnAddress());
     note_caller(callerRva);
+    // Repaint pushed the four arguments after its saved EBP, so its own return
+    // address sits six slots above ours.
+    uint32_t outerRva =
+        to_rva(reinterpret_cast<void**>(_AddressOfReturnAddress())[6]);
+    static uint32_t s_lastOuterRva = 0;
+    if (outerRva != s_lastOuterRva) {
+        s_lastOuterRva = outerRva;
+        BVR_LOG("[reentry] build caller 0x%X, outer caller 0x%X", callerRva, outerRva);
+    }
     if (n <= 2)
         BVR_LOG("[reentry] build fired #%u (tid %u, caller 0x%X, ecx %p, a1 %p)",
                 n, tid, callerRva, ecx, a1);
@@ -823,7 +836,7 @@ void __fastcall BuildDetour(void* ecx, void* edx, void* a1, void* a2, void* a3,
 
     if (depth == 0)
         maybe_second_build(ecx, edx, a1, a2, a3, a4, tid, presentDelta,
-                           callerRva);
+                           callerRva, outerRva);
 
     if (!g_drain.enabled.load(std::memory_order_relaxed) &&
         !g_flush.enabled.load(std::memory_order_relaxed))
@@ -1347,7 +1360,7 @@ void handle_command(const char* args) {
             install_slot(g_submit, patterns::kFrameSubmitRva,
                          reinterpret_cast<void*>(&SubmitDetour),
                          patterns::kFrameSubmitPrologue,
-                         sizeof patterns::kFrameSubmitPrologue);
+                         patterns::kFrameSubmitPrologueLen);
         } else { // default: the scene BUILD root (the DR-5 seam)
             install_slot(g_build, patterns::kSceneBuildRva,
                          reinterpret_cast<void*>(&BuildDetour),
@@ -1416,7 +1429,7 @@ void handle_command(const char* args) {
                        install_slot(g_submit, patterns::kFrameSubmitRva,
                                     reinterpret_cast<void*>(&SubmitDetour),
                                     patterns::kFrameSubmitPrologue,
-                                    sizeof patterns::kFrameSubmitPrologue)) {
+                                    patterns::kFrameSubmitPrologueLen)) {
                 // Drain empty-slot guard: insurance, not a gate - stereo
                 // still arms if this install fails.
                 if (!install_slot(g_drain, patterns::kDrainRva,

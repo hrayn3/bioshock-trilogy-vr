@@ -112,6 +112,37 @@ void rebind_vtables(const bvr::pattern_scan::ProcessImage& image) {
     rebind_vtable(image, ".?AVUClass@@", kUClassVtableRva);
 }
 
+void apply_gog_addresses() {
+    kRenderFlushRva = 0x400BA0;
+    kDrainRva = 0x4006C0;
+    kPumpLoopRva = 0x400C60;
+    kFrameSubmitRva = 0x375730;
+    kSceneBuildRva = 0x2CD160;
+    kSceneBuildGameplayRetRva = 0x5EC45B;
+    kSceneBuildGameplayOuterRetRva = 0x5EA95E;
+    kFlushPointRva = 0x400CD0;
+    kRenderTidGlobalRva = 0x12F142C;
+    kRenderMgrGlobalRva = 0x12D267C;
+    kFrameIdPairRva = 0;
+    kPumpKickEventPtrRva = 0x12D2784;
+    kEventVtableRva = 0xDD21BC;
+    kRenderThreadObjRva = 0x12D277C;
+    kForceNonThreadedRenderRva = 0x12F1444;
+    kNumHwThreadsRva = 0x1146620;
+    kThreadDivisorRva = 0x114661C;
+    kFgSceneNodeCtorRva = 0x361BC0;
+    kFgSceneNodeVtableRva = 0xDC1B14;
+    kXInputGetStateIatRva = 0xBC6A7C;
+    kXInputSetStateIatRva = 0xBC6A80;
+    static const uint8_t build[sizeof kSceneBuildPrologue] = {0x55, 0x8B, 0xEC, 0x83, 0xE4,
+                                                              0xF0, 0x6A, 0xFF, 0x68};
+    memcpy(kSceneBuildPrologue, build, sizeof build);
+    // Stops before the relocated global the next instruction loads.
+    static const uint8_t submit[] = {0x55, 0x8B, 0xEC, 0x51, 0x8B, 0x0D};
+    memcpy(kFrameSubmitPrologue, submit, sizeof submit);
+    kFrameSubmitPrologueLen = sizeof submit;
+}
+
 // A fire-start implementation ends in `ret imm16` and reads the documented
 // pawn fields. Matching all of that by accident is what this refuses to assume.
 bool has_disp32(const uint8_t* begin, const uint8_t* end, uint32_t value) {
@@ -503,6 +534,10 @@ bool resolve(const bvr::pattern_scan::ProcessImage& image, Symbols& out) {
         g_gnamesBound = false;
         g_enginePtrBound = false;
         rebind_vtables(image);
+        if (host.timeDateStamp == kGogTimeDateStamp && host.fileBytes == kGogFileBytes) {
+            apply_gog_addresses();
+            BVR_LOG("[b1r] GOG build recognised - render address table applied");
+        }
     }
 
     EventScanResult scan{};
