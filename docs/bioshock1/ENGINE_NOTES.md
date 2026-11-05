@@ -3518,3 +3518,39 @@ fg path (route B - unnecessary, the cluster lever passed first) and the fovA
 consumer hunt (route A - stays parked with its in-headset world-coupling
 negative). `kActorDrawScaleOffset`/dirty-protocol constants remain declared,
 still unreferenced.
+
+
+## Havok on the GOG build (static analysis, 2026-11-05)
+
+All RVAs are the GOG exe (timestamp 0x5BBD3A7A). Addresses are read from disassembly, RTTI and the
+hkClass tables. Only those in `patterns.cpp` have been exercised live.
+
+**The wrench is not a phantom.** `CreateCollisionPhantom` (impl 0x710B0) builds a box and a bare
+hkpCollidable, adds neither to the world, and runs `getPenetrations` each tick (tick at vtable
++0x130, 0x70BC0). The pose is an animation track sampled by frame times the AHands LocalToWorld, so
+the bone drive and `vrbones meleehold` cannot move the hit. This corrects the session-10 and
+session-30 wording above.
+
+World: `pawn+0xFC` level, `+0x427C` Havok wrapper, `+0x24` hkpWorld. Scale UU x 0.02, no axis flip.
+Stepped inside `ULevel::Tick` with 0 worker threads, so CalcView is outside the step.
+
+| Item | RVA | Notes |
+|---|---|---|
+| Havok TLS slot | 0x117EC84 | router `+0x2C` heap, vt+4 alloc, vt+8 free. Game thread only |
+| hkpCapsuleShape ctor | 0x7F6B20 | (a*, b*, float r), 0x40 bytes |
+| hkpRigidBodyCinfo ctor | 0x6DB570 | 0xD0 bytes. +0 filter, +4 shape, +0x10 pos, +0x20 quat, +0xB4 motion |
+| hkpRigidBody ctor | 0x6D0780 | (cinfo*), 0x220 bytes, vtable 0xBFDD64 |
+| addProperty | 0x6D2960 | (key, lo, hi). Key 0 is the actor; the door listener needs it |
+| addEntity / removeEntity | 0x6C4030 / 0x6C41D0 | (entity, activation) / (hkBool* out, entity) |
+| setPositionAndRotation (critical op) | 0x6D0E30 | (pos*, quat*) |
+| removeReference | 0x60E630 | |
+| QueueKeyframe | 0x2C0D70 | on the wrapper, (pos*, quat*, body*). Pre-step applies, post-step zeroes |
+
+Body offsets: +0x2C filter, +0xE8 motion type, +0x120 position, +6 refcount. World: +0x28 active
+islands, +0x34 inactive, +0x8C critical lock count. Filter info is
+`(group<<16)|(dontCollide<<10)|(subId<<5)|layer`. Layers: 1 static, 3 player proxy, 4 AI proxy,
+5 keyframed, 10 and 2 debris family, 11 projectiles, 13 wrench query, 14 pawn dynamic fallback.
+`kForceNonThreadedRenderRva` also gates physics logic (0x1A8F2C, 0x2BEAA1, 0x2BEB25), so poking it
+has physics consequences.
+
+Teardown on level change is unread: physhand forgets the body and makes no Havok call.

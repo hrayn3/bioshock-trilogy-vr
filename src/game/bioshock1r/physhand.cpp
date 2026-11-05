@@ -58,7 +58,7 @@ const Collider kHandCollider = {"hand", 0.00f, 0.12f, 0.05f};
 const float kFwd[3] = {1.0f, 0.0f, 0.0f};
 
 const uint8_t* g_base = nullptr;
-std::atomic<bool> g_enabled{false};
+std::atomic<bool> g_enabled{true};
 std::atomic<bool> g_forceOff{false};
 bool g_nearPending = false;
 bool g_nearLooseOnly = false;

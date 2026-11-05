@@ -36,11 +36,21 @@ step, so we feed that queue instead of writing velocity ourselves.
 Rejected: writing velocity ourselves (the game's queue already does this and zeroes it after the
 step), and spawning an `AHavokActor` (needs a package object, and it would be saved).
 
-## Stages
+## Results (simulator, GOG build, 2026-11-05)
 
-1. Body follows the hand, off by default, `vrphys on`. Survives load, save and quit.
-2. `vrphys near` finds a prop, the hand moves it.
-3. Projectile weapons checked.
-4. Default on, headset feel and tuning.
+- Body follows the hand exactly, swaps collider on weapon change, survives two loads and a save
+  with zero faults. The refcount guard holds through weapon switches.
+- `vrphys sweep` through a pile of 17 sleeping props 46 m away: nothing moved before the sweep, all
+  of them moved within 60 ms of it. So contact works and it wakes sleeping props.
+- Grenades look the same with the body at the hand and parked 100 m below (`vrphys park on`): one
+  sighting each shot in both. That shows no difference, not a tracked flight, so check them in
+  the headset. Crossbow bolts never appeared on the projectile layer.
+- The axis must be read after the equip animation: 2 s after a switch or load gives the barrel
+  axis, 0.8 s gave a mid-animation one.
+
+Open for the headset: push strength, collider sizes, and whether the Camera and Chemical Thrower
+axes (bone 44 is not obviously the barrel on those) look right.
+
+Tools: `vrphys status|near [loose]|sweep <n>|watch|park on|off|on|off`.
 
 Addresses are in ENGINE_NOTES, "Havok on the GOG build".
