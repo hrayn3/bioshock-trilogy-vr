@@ -235,8 +235,9 @@ private:
 // The engine global: a slot in the image's writable data holding the one object
 // whose vtable is UGameEngine's. Identity comes from the vtable, not a guess.
 bool bind_engine_ptr() {
-    if (!kEngineVtableRva) return false;
+    if (!kEngineVtableRva || !kClientVtableRva) return false;
     const void* want = g_imageBase + kEngineVtableRva;
+    const void* wantClient = g_imageBase + kClientVtableRva;
     const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(g_imageBase);
     const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(g_imageBase + dos->e_lfanew);
     const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
@@ -250,6 +251,13 @@ bool bind_engine_ptr() {
             if ((reinterpret_cast<uintptr_t>(object) & 3) != 0 || !object) continue;
             if (!cache.readable(object)) continue;
             if (*reinterpret_cast<const void* const*>(object) != want) continue;
+            // Temporaries also hold the engine pointer for a while. Only the
+            // live global leads on to a real client object.
+            const auto* clientSlot = static_cast<const uint8_t*>(object) + kEngineClientOffset;
+            if (!cache.readable(clientSlot)) continue;
+            const void* client = *reinterpret_cast<const void* const*>(clientSlot);
+            if (!client || !cache.readable(client)) continue;
+            if (*reinterpret_cast<const void* const*>(client) != wantClient) continue;
             kGameEnginePtrRva = static_cast<uint32_t>(begin + off - g_imageBase);
             BVR_LOG("[b1r] rebind engine global: RVA 0x%X", kGameEnginePtrRva);
             return true;
