@@ -18,7 +18,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force out | Out-Null
-          Get-ChildItem build -Recurse -Include xinput1_3.dll,bioshockvr.dll,bvr_steamvr32.dll |
+          Get-ChildItem build -Recurse -Include xinput1_3.dll,bioshockvr.dll,bvr_steamvr32.dll,bvr_xrsim32.dll |
             Where-Object FullName -notmatch 'CMakeFiles' |
             Copy-Item -Destination out -Force
           Get-ChildItem out | Format-Table Name,Length
