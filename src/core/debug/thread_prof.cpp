@@ -127,16 +127,19 @@ DWORD WINAPI sample_thread(void* arg) {
         si->MaxNameLen = 127;
         DWORD64 disp = 0;
         std::string name = SymFromAddr(proc, eips[i], &disp, si) ? si->Name : "?";
+        // Two frames: a mod helper alone says little about who asked for it.
         std::string caller = "-";
-        for (size_t k = 0; k < kStackDwords; ++k) {
+        int depth = 0;
+        for (size_t k = 0; k < kStackDwords && depth < 2; ++k) {
             uintptr_t v = stacks[i * kStackDwords + k];
             const Mod* c = mod_of(v);
             if (!c || (c->base != exeBase && c->base != selfBase)) continue;
+            uint32_t rva = static_cast<uint32_t>(v - c->base);
+            if (c->base == exeBase && rva >= 0xB00000) continue; // data, not a return address
             char hex[32];
-            sprintf_s(hex, "%s+%X", c->base == exeBase ? "exe" : "mod",
-                      static_cast<unsigned>(v - c->base));
-            caller = hex;
-            break;
+            sprintf_s(hex, "%s+%X", c->base == exeBase ? "exe" : "mod", rva);
+            caller = depth ? caller + " < " + hex : hex;
+            ++depth;
         }
         ++sys[m->name + "!" + name + " < " + caller];
     }

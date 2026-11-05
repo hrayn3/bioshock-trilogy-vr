@@ -747,7 +747,7 @@ void on_calcview(const FrameContext& ctx) {
         // it no-ops at wscale 1.0 and drops itself on weapon switches.
         bones::wskel_drive();
         if (!bones::drive(ctx, target, gp, hand)) return;
-        physhand::on_frame(target, gp, hand);
+        physhand::on_frame(gp, hand);
     } else {
         uint8_t* p = static_cast<uint8_t*>(target);
         bool wrote = write12(p + patterns::kActorLocOffset, loc);

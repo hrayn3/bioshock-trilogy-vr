@@ -4,6 +4,7 @@
 #include "core/util/log.h"
 #include "game/bioshock1r/aim.h"
 #include "game/bioshock1r/bones.h"
+#include "game/bioshock1r/hands.h"
 #include "game/bioshock1r/patterns.h"
 
 #include <windows.h>
@@ -287,13 +288,16 @@ void on_world_change() {
     g_nearScan = false;
 }
 
-void on_frame(void* handsActor, const GamePose& gp, int hand) {
+void on_frame(const GamePose& gp, int hand) {
     if (!g_enabled.load(std::memory_order_relaxed) || g_forceOff.load(std::memory_order_relaxed))
         return;
     if (!g_base || !patterns::kHkQueueKeyframeRva) return;
 
+    // The rig has no owner field we trust; the holdable's is the fire path's own.
+    void* hold = nullptr;
     void* pawn = nullptr;
-    if (!read_ptr(static_cast<uint8_t*>(handsActor) + patterns::kWeaponOwnerOffset, &pawn) ||
+    if (!hands::current_holdable(&hold) || !hold ||
+        !read_ptr(static_cast<uint8_t*>(hold) + patterns::kWeaponOwnerOffset, &pawn) ||
         !vtable_is(pawn, patterns::kShockPlayerVtableRva))
         return;
     void* level = nullptr;

@@ -10,7 +10,7 @@ namespace bvr::b1r::physhand {
 void init(const bvr::pattern_scan::ProcessImage& image);
 void on_world_change();
 // Once per frame, game thread, after the bone drive placed the hand.
-void on_frame(void* handsActor, const GamePose& gp, int hand);
+void on_frame(const GamePose& gp, int hand);
 void handle_command(const char* args);
 
 } // namespace bvr::b1r::physhand
