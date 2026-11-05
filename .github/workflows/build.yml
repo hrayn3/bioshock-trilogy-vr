@@ -1,0 +1,28 @@
+name: build
+on:
+  push:
+    branches: [gog-build-support]
+  workflow_dispatch:
+jobs:
+  win32:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Configure
+        run: cmake --preset win32
+      - name: Build
+        run: cmake --build --preset release --parallel
+      - name: Collect DLLs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Get-ChildItem build -Recurse -Include xinput1_3.dll,bioshockvr.dll,bvr_steamvr32.dll |
+            Where-Object FullName -notmatch 'CMakeFiles' |
+            Copy-Item -Destination out -Force
+          Get-ChildItem out | Format-Table Name,Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bioshock-vr-dlls
+          path: out/*.dll

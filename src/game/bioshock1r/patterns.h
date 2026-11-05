@@ -59,7 +59,7 @@ inline constexpr uint32_t kFovLiveOffset = 0xE0;
 // slots the ptr-scan surfaced were coincidental range matches that a float
 // later overwrote); the object itself is stable for the session, so we locate
 // it by scanning the heap for its fixed-RVA vtable and caching the instance.
-inline constexpr uint32_t kUserSettingsVtableRva = 0xDA3878;  // .?AVUShockUserSettings@@
+inline uint32_t kUserSettingsVtableRva = 0xDA3878;  // .?AVUShockUserSettings@@
 inline constexpr uint32_t kUserSettingsHfovOffset = 0x8C;     // int32, degrees
 
 // Plausibility window for the accept filter. The options UI clamps to 75-130,
@@ -298,8 +298,8 @@ inline constexpr uint32_t kMgrFlushSeenOffset = 0x54;    // stamped 1 per flush
 // "ToggleUseController" console command that calls the same setter.
 inline constexpr uint32_t kGameEnginePtrRva = 0x1375368;  // [.]->UGameEngine, +0x4C = Client
 inline constexpr uint32_t kEngineClientOffset = 0x4C;
-inline constexpr uint32_t kClientVtableRva = 0xE4DBE0;    // RTTI .?AVUWindowsClient@@
-inline constexpr uint32_t kViewportVtableRva = 0xE4E448;  // RTTI .?AVUWindowsViewport@@
+inline uint32_t kClientVtableRva = 0xE4DBE0;    // RTTI .?AVUWindowsClient@@
+inline uint32_t kViewportVtableRva = 0xE4E448;  // RTTI .?AVUWindowsViewport@@
 inline constexpr uint32_t kClientViewportsDataOffset = 0x44; // TArray<UViewport*> data
 inline constexpr uint32_t kClientViewportsCountOffset = 0x4C;
 inline constexpr uint32_t kClientUseControllerOffset = 0xDC; // BOOL, ini UseController is dead
@@ -342,7 +342,7 @@ inline constexpr uint32_t kEngineExecThisOffset = 0x40; // FExec subobject
 // runs UnrealScript exec commands needs its exact signature reversed before it
 // can be called safely - a naive slot-65 call unbalanced the stack (session 9).
 // Parked M6 groundwork.
-inline constexpr uint32_t kEngineVtableRva = 0xE0DFF4; // RTTI .?AVUGameEngine@@ (offset 0)
+inline uint32_t kEngineVtableRva = 0xE0DFF4; // RTTI .?AVUGameEngine@@ (offset 0)
 // FOutputDevice contract (from the Logf helper 0x6E7AC0): vtbl+0x10 is a
 // 2-arg log-filter (return 0 = suppress -> the helper skips formatting and
 // Serialize entirely); vtbl+0x4 is Serialize(text, event), 2 args. The seam's
@@ -369,7 +369,13 @@ inline constexpr uint32_t kEngineVtableRva = 0xE0DFF4; // RTTI .?AVUGameEngine@@
 //   (void* instigator, FVector* outA, FVector* outB, void* outC)
 //   same two sources, one slot over; the probe logs both so the labels are
 //   confirmed live rather than assumed.
-inline constexpr uint32_t kAttackAbilityVtableRva = 0xD7E9D4;   // .?AVUAttackAbility@@
+inline uint32_t kAttackAbilityVtableRva = 0xD7E9D4;   // .?AVUAttackAbility@@
+// The two pawn fields every fire-start implementation reads, and each
+// variant's `ret` size - together, the shape check for unrecognised builds.
+inline constexpr uint32_t kFireStartLocationOffset = 0x1D8;
+inline constexpr uint32_t kFireStartViewOffset = 0x450;
+inline constexpr uint16_t kWeaponFireStartRetBytes = 0xC;
+inline constexpr uint16_t kAbilityFireStartRetBytes = 0x10;
 inline constexpr uint32_t kWeaponFireStartVtblOffset = 0x304;    // AWeapon vtable slot
 inline constexpr uint32_t kExpectedWeaponFireStartImplRva = 0x226840;
 inline constexpr uint32_t kAbilityFireStartImplRva = 0x1BC220;   // direct call target
@@ -435,9 +441,9 @@ inline constexpr uint32_t kFFrameCodeOffset = 0xC;
 // `.?AV<name>@@` -> CompleteObjectLocator -> vtable). AShockPlayer is the
 // player's own pawn, which is what CalcView reports as the view actor during
 // normal gameplay - the cutscene guard is "view actor still has this vtable".
-inline constexpr uint32_t kShockPlayerVtableRva = 0xD82BB8;   // .?AVAShockPlayer@@
-inline constexpr uint32_t kPlayerWeaponVtableRva = 0xD8FF58;  // .?AVAPlayerWeapon@@
-inline constexpr uint32_t kHandsVtableRva = 0xD8A28C;         // .?AVAHands@@ (M7)
+inline uint32_t kShockPlayerVtableRva = 0xD82BB8;   // .?AVAShockPlayer@@
+inline uint32_t kPlayerWeaponVtableRva = 0xD8FF58;  // .?AVAPlayerWeapon@@
+inline uint32_t kHandsVtableRva = 0xD8A28C;         // .?AVAHands@@ (M7)
 
 // ---- M7-v2 skeleton internals (session 12, 2026-07-26) ----------------------
 // Derivations in ENGINE_NOTES "Skeleton / bone internals": native impl walks
@@ -634,7 +640,7 @@ inline constexpr uint32_t kHandsCurrentHoldableOffset = 0x45C;
 // kUClassVtableRva validates the +0x30 target before it is trusted.
 inline constexpr uint32_t kUObjectNameIndexOffset = 0x28; // FName index (+0x2C = number)
 inline constexpr uint32_t kUObjectClassOffset = 0x30;     // UClass*
-inline constexpr uint32_t kUClassVtableRva = 0xE2F04C;
+inline uint32_t kUClassVtableRva = 0xE2F04C;
 
 // ---- Name system (session 20) ----------------------------------------------
 // Derived by capstone disassembly of the FName constructor the event scan
@@ -646,7 +652,7 @@ inline constexpr uint32_t kUClassVtableRva = 0xE2F04C;
 // FindType==2 path ORs 0x4000000 into +0x4), +0xC FNameEntry* hash next,
 // +0x10 UTF-16 text in place. An FName field is 8 bytes {index, number}.
 // The 4096-bucket string->index hash lives at kFNameHashRva (bonus oracle).
-inline constexpr uint32_t kGNamesDataRva = 0x13904EC;
+inline uint32_t kGNamesDataRva = 0x13904EC;
 inline constexpr uint32_t kFNameHashRva = 0x1370EC0;
 inline constexpr uint32_t kFNameEntryHashNextOffset = 0xC;
 inline constexpr uint32_t kFNameEntryTextOffset = 0x10;
@@ -678,6 +684,10 @@ struct Symbols {
 
 // Runs all scans, logging each stage. False if anything failed to resolve.
 bool resolve(const bvr::pattern_scan::ProcessImage& image, Symbols& out);
+
+// On an unrecognised build, resolve() rebinds the non-const vtable and name
+// table RVAs above from the running image: the values shown are the Steam
+// build's, and they only stay in force there.
 
 // The M6 aim natives only (called by resolve; separate so a rescan is cheap).
 // Fail-soft per symbol - each miss is logged and leaves its slot null.

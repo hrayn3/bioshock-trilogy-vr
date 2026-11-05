@@ -37,6 +37,11 @@ std::vector<const uint8_t*> find_ascii_string(const ProcessImage& img, const cha
 // imm32/disp32 in the image that references that address.
 std::vector<const uint8_t*> find_references(const ProcessImage& img, const void* target);
 
+// Finds a class's primary vtable from MSVC x86 RTTI, given its mangled name
+// (".?AVFoo@@"). Survives relinks that move every hardcoded address. Returns
+// nullptr when the class is missing or the answer is ambiguous - never a guess.
+const uint8_t* find_rtti_vtable(const ProcessImage& img, const char* mangledName);
+
 // From a code xref to an FName's init string: forward-scan (<=96 bytes) for
 // the E8 CALL into the FName constructor, then past that 5-byte CALL for the
 // 89 0D (mov [imm32], ecx) store that caches the returned name index. Returns

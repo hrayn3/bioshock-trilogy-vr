@@ -118,6 +118,37 @@ std::vector<const uint8_t*> find_references(const ProcessImage& img, const void*
     return out;
 }
 
+const uint8_t* find_rtti_vtable(const ProcessImage& img, const char* mangledName) {
+    // x86 layout: TypeDescriptor { vftable, spare, name[] } so the name sits at
+    // +8; CompleteObjectLocator { signature, offset, cdOffset, pTypeDescriptor,
+    // pClassDescriptor }; and vtable[-1] points at the locator. Only the
+    // locator with offset 0 belongs to the primary vtable.
+    constexpr size_t kTypeDescNameOffset = 8;
+    constexpr size_t kLocatorTypeDescOffset = 12;
+    const size_t nameLen = strlen(mangledName);
+    const uint8_t* imageEnd = img.base + img.size;
+    const uint8_t* found = nullptr;
+    for (const uint8_t* name : find_ascii_string(img, mangledName)) {
+        if (name + nameLen >= imageEnd || name[nameLen] != 0) continue;
+        if (name < img.base + kTypeDescNameOffset) continue;
+        for (const uint8_t* ref : find_references(img, name - kTypeDescNameOffset)) {
+            if (ref < img.base + kLocatorTypeDescOffset) continue;
+            const uint8_t* locator = ref - kLocatorTypeDescOffset;
+            uint32_t signature = 0, offset = 0;
+            memcpy(&signature, locator, sizeof(signature));
+            memcpy(&offset, locator + sizeof(uint32_t), sizeof(offset));
+            if (signature != 0 || offset != 0) continue;
+            for (const uint8_t* slot : find_references(img, locator)) {
+                const uint8_t* vtable = slot + sizeof(uint32_t);
+                if (vtable >= imageEnd) continue;
+                if (found && found != vtable) return nullptr; // ambiguous: refuse
+                found = vtable;
+            }
+        }
+    }
+    return found;
+}
+
 const uint8_t* find_fname_index_global(const ProcessImage& img, const uint8_t* stringXref,
                                        const uint8_t** ctorOut) {
     constexpr size_t kForwardWindow = 96;

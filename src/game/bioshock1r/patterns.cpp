@@ -78,6 +78,150 @@ bool accept_user_settings(void* obj, void*, int32_t probe[bvr::heap_scan::kProbe
     return fov >= kUserSettingsHfovMin && fov <= kUserSettingsHfovMax;
 }
 
+// ---- Unrecognised builds ---------------------------------------------------
+// Every class-table address below is re-derived from the running image; a
+// value that cannot be derived stays unusable rather than falling back to the
+// Steam number, and every code target must pass a shape check before hooking.
+
+bool g_gnamesBound = true; // only an unrecognised build has to look for it
+
+bool rebind_vtable(const bvr::pattern_scan::ProcessImage& image, const char* mangled,
+                   uint32_t& rva) {
+    const uint8_t* vtable = bvr::pattern_scan::find_rtti_vtable(image, mangled);
+    if (!vtable) {
+        BVR_LOG("[b1r] rebind %s: NOT found - dependent features stay off", mangled);
+        rva = 0;
+        return false;
+    }
+    uint32_t found = static_cast<uint32_t>(vtable - image.base);
+    BVR_LOG("[b1r] rebind %s: RVA 0x%X (Steam build 0x%X)", mangled, found, rva);
+    rva = found;
+    return true;
+}
+
+void rebind_vtables(const bvr::pattern_scan::ProcessImage& image) {
+    rebind_vtable(image, ".?AVUShockUserSettings@@", kUserSettingsVtableRva);
+    rebind_vtable(image, ".?AVUAttackAbility@@", kAttackAbilityVtableRva);
+    rebind_vtable(image, ".?AVAShockPlayer@@", kShockPlayerVtableRva);
+    rebind_vtable(image, ".?AVAPlayerWeapon@@", kPlayerWeaponVtableRva);
+    rebind_vtable(image, ".?AVAHands@@", kHandsVtableRva);
+    rebind_vtable(image, ".?AVUWindowsClient@@", kClientVtableRva);
+    rebind_vtable(image, ".?AVUWindowsViewport@@", kViewportVtableRva);
+    rebind_vtable(image, ".?AVUGameEngine@@", kEngineVtableRva);
+    rebind_vtable(image, ".?AVUClass@@", kUClassVtableRva);
+}
+
+// A fire-start implementation ends in `ret imm16` and reads the documented
+// pawn fields. Matching all of that by accident is what this refuses to assume.
+bool has_disp32(const uint8_t* begin, const uint8_t* end, uint32_t value) {
+    for (const uint8_t* p = begin; p + sizeof(value) <= end; ++p) {
+        if (memcmp(p, &value, sizeof(value)) == 0) return true;
+    }
+    return false;
+}
+
+bool fire_start_shape(const uint8_t* fn, uint16_t retBytes) {
+    using bvr::pattern_scan::is_memory_valid;
+    constexpr size_t kMaxBody = 0x600;
+    if (!is_memory_valid(fn, kMaxBody)) return false;
+    const uint8_t* end = nullptr;
+    for (const uint8_t* p = fn; p + 3 <= fn + kMaxBody; ++p) {
+        if (p[0] == 0xC2 && memcmp(p + 1, &retBytes, sizeof(retBytes)) == 0) {
+            end = p;
+            break;
+        }
+    }
+    return end && has_disp32(fn, end, kFireStartLocationOffset) &&
+           has_disp32(fn, end, kFireStartViewOffset);
+}
+
+// UAttackAbility::GetPerfectFireStart has no vtable slot of its own: it is a
+// direct call out of an ability virtual. Exactly one shape match, or nothing.
+const uint8_t* find_ability_fire_start(const bvr::pattern_scan::ProcessImage& image,
+                                       const uint8_t** callerOut) {
+    using bvr::pattern_scan::is_memory_valid;
+    constexpr uint32_t kMaxVtableBytes = 0x340;
+    constexpr size_t kCallerWindow = 0x500;
+    if (!kAttackAbilityVtableRva) return nullptr;
+    const uint8_t* vtable = image.base + kAttackAbilityVtableRva;
+    const uint8_t* imageEnd = image.base + image.size;
+    const uint8_t* match = nullptr;
+    for (uint32_t off = 0; off < kMaxVtableBytes; off += sizeof(void*)) {
+        if (!is_memory_valid(vtable + off, sizeof(void*))) break;
+        const uint8_t* impl = *reinterpret_cast<const uint8_t* const*>(vtable + off);
+        if (impl < image.base || impl >= imageEnd) break; // end of the table
+        if (!is_memory_valid(impl, kCallerWindow)) continue;
+        for (const uint8_t* p = impl; p + 5 <= impl + kCallerWindow; ++p) {
+            if (*p != 0xE8) continue;
+            int32_t rel = 0;
+            memcpy(&rel, p + 1, sizeof(rel));
+            const uint8_t* target = p + 5 + rel;
+            if (target < image.base || target + sizeof(kAbilityFireStartPrologue) >= imageEnd)
+                continue;
+            if (!is_memory_valid(target, sizeof(kAbilityFireStartPrologue))) continue;
+            if (memcmp(target, kAbilityFireStartPrologue,
+                       sizeof(kAbilityFireStartPrologue)) != 0)
+                continue;
+            if (!fire_start_shape(target, kAbilityFireStartRetBytes)) continue;
+            if (match && match != target) return nullptr; // ambiguous: refuse
+            match = target;
+            if (callerOut) *callerOut = impl;
+        }
+    }
+    return match;
+}
+
+// The name table is filled during engine init, so this runs on demand: three
+// dwords { Data, Count, Max } in the image's writable data whose first entries
+// each carry their own index at +0.
+bool bind_gnames() {
+    using bvr::pattern_scan::is_memory_valid;
+    constexpr int32_t kMinNames = 1000, kMaxNames = 2000000, kProbe = 32;
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(g_imageBase);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(g_imageBase + dos->e_lfanew);
+    const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
+    uint32_t found = 0;
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+        if (!(section->Characteristics & IMAGE_SCN_MEM_WRITE)) continue;
+        const uint8_t* begin = g_imageBase + section->VirtualAddress;
+        size_t size = section->Misc.VirtualSize;
+        for (size_t off = 0; off + 12 <= size; off += 4) {
+            const uint8_t* p = begin + off;
+            auto data = *reinterpret_cast<const uint8_t* const* const*>(p);
+            int32_t count = *reinterpret_cast<const int32_t*>(p + 4);
+            int32_t max = *reinterpret_cast<const int32_t*>(p + 8);
+            if (count < kMinNames || count > kMaxNames || max < count || !data) continue;
+            if (!is_memory_valid(data, kProbe * sizeof(void*))) continue;
+            bool ok = true;
+            for (int32_t n = 0; ok && n < kProbe; ++n) {
+                const uint8_t* entry = data[n];
+                ok = entry && is_memory_valid(entry, kFNameEntryTextOffset + 2) &&
+                     *reinterpret_cast<const int32_t*>(entry) == n;
+            }
+            if (!ok) continue;
+            if (found) { // two tables would mean this shape test is wrong
+                BVR_LOG("[b1r] name table ambiguous - class names stay off");
+                return false;
+            }
+            found = static_cast<uint32_t>(p - g_imageBase);
+        }
+    }
+    if (!found) return false;
+    kGNamesDataRva = found;
+    BVR_LOG("[b1r] rebind name table: RVA 0x%X", found);
+    return true;
+}
+
+bool gnames_ready() {
+    if (g_gnamesBound) return true;
+    static DWORD nextTry = 0;
+    DWORD now = GetTickCount();
+    if (static_cast<int32_t>(now - nextTry) < 0) return false;
+    nextTry = now + 2000; // the scan walks all of .data - never per call
+    g_gnamesBound = bind_gnames();
+    return g_gnamesBound;
+}
+
 } // namespace
 
 void log_scan_result(const char* what, const ObjectScan& scan, const ScanResult& r,
@@ -291,6 +435,8 @@ bool resolve(const bvr::pattern_scan::ProcessImage& image, Symbols& out) {
         BVR_LOG("[b1r] unaffected. If you are on Epic, GOG or a newer patch, please send this");
         BVR_LOG("[b1r] log - the three numbers above are what a per-build offset table needs.");
         BVR_LOG("[b1r] ============================================================");
+        g_gnamesBound = false;
+        rebind_vtables(image);
     }
 
     EventScanResult scan{};
@@ -337,23 +483,31 @@ void resolve_aim_natives(const bvr::pattern_scan::ProcessImage& image, Symbols& 
     // RVA is only a cross-check.
     const void** weaponVtbl =
         reinterpret_cast<const void**>(const_cast<uint8_t*>(image.base) + kPlayerWeaponVtableRva);
-    if (is_memory_valid(weaponVtbl, kWeaponFireStartVtblOffset + sizeof(void*))) {
+    if (kPlayerWeaponVtableRva &&
+        is_memory_valid(weaponVtbl, kWeaponFireStartVtblOffset + sizeof(void*))) {
         const uint8_t* impl = *reinterpret_cast<const uint8_t* const*>(
             reinterpret_cast<const uint8_t*>(weaponVtbl) + kWeaponFireStartVtblOffset);
         if (impl >= image.base && impl < image.base + image.size) {
-            out.weaponFireStart = const_cast<uint8_t*>(impl);
             uint32_t rva = static_cast<uint32_t>(impl - image.base);
-            BVR_LOG("[b1r] AWeapon::GetPerfectFireStart impl = %p (RVA 0x%X%s)", impl, rva,
-                    rva == kExpectedWeaponFireStartImplRva
-                        ? ""
-                        : " - DIFFERS from the documented build");
+            if (rva == kExpectedWeaponFireStartImplRva ||
+                fire_start_shape(impl, kWeaponFireStartRetBytes)) {
+                out.weaponFireStart = const_cast<uint8_t*>(impl);
+                BVR_LOG("[b1r] AWeapon::GetPerfectFireStart impl = %p (RVA 0x%X%s)", impl, rva,
+                        rva == kExpectedWeaponFireStartImplRva
+                            ? ""
+                            : " - shape verified on this build");
+            } else {
+                BVR_LOG("[b1r] AWeapon::GetPerfectFireStart candidate at RVA 0x%X failed the "
+                        "shape check - REFUSING the hook", rva);
+            }
         }
     }
     if (!out.weaponFireStart)
         BVR_LOG("[b1r] AWeapon::GetPerfectFireStart impl NOT resolved (vtable read failed)");
 
     // Same two functions one level up, for the probe's "a shot happened" line.
-    if (is_memory_valid(weaponVtbl, kWeaponInitDamageVtblOffset + sizeof(void*))) {
+    if (kPlayerWeaponVtableRva &&
+        is_memory_valid(weaponVtbl, kWeaponInitDamageVtblOffset + sizeof(void*))) {
         const uint8_t* impl = *reinterpret_cast<const uint8_t* const*>(
             reinterpret_cast<const uint8_t*>(weaponVtbl) + kWeaponInitDamageVtblOffset);
         if (impl >= image.base && impl < image.base + image.size) {
@@ -364,7 +518,7 @@ void resolve_aim_natives(const bvr::pattern_scan::ProcessImage& image, Symbols& 
         }
     }
     const uint8_t* abilityInit = image.base + kAbilityInitDamageRva;
-    if (is_memory_valid(abilityInit, sizeof kAbilityInitDamagePrologue) &&
+    if (g_rvaTrusted && is_memory_valid(abilityInit, sizeof kAbilityInitDamagePrologue) &&
         memcmp(abilityInit, kAbilityInitDamagePrologue, sizeof kAbilityInitDamagePrologue) == 0) {
         out.abilityInitDamage = const_cast<uint8_t*>(abilityInit);
         BVR_LOG("[b1r] UAttackAbility::InitiateDamage impl = %p (RVA 0x%X)", abilityInit,
@@ -374,6 +528,20 @@ void resolve_aim_natives(const bvr::pattern_scan::ProcessImage& image, Symbols& 
     // Ability side: the InitiateDamage call site calls it directly, so there is
     // no slot to read - use the documented RVA, gated on a prologue match so a
     // patched build refuses rather than hooking a stranger.
+    if (!g_rvaTrusted) {
+        const uint8_t* caller = nullptr;
+        const uint8_t* found = find_ability_fire_start(image, &caller);
+        if (found) {
+            out.abilityFireStart = const_cast<uint8_t*>(found);
+            out.abilityInitDamage = const_cast<uint8_t*>(caller);
+            BVR_LOG("[b1r] UAttackAbility::GetPerfectFireStart impl = %p (RVA 0x%X - shape "
+                    "verified on this build)", found, static_cast<uint32_t>(found - image.base));
+        } else {
+            BVR_LOG("[b1r] UAttackAbility::GetPerfectFireStart not uniquely identified - "
+                    "plasmid aim unavailable");
+        }
+        return;
+    }
     const uint8_t* ability = image.base + kAbilityFireStartImplRva;
     if (is_memory_valid(ability, sizeof kAbilityFireStartPrologue) &&
         memcmp(ability, kAbilityFireStartPrologue, sizeof kAbilityFireStartPrologue) == 0) {
@@ -388,7 +556,7 @@ void resolve_aim_natives(const bvr::pattern_scan::ProcessImage& image, Symbols& 
 
 const wchar_t* fname_text(int32_t index) {
     using bvr::pattern_scan::is_memory_valid;
-    if (!g_imageBase || index < 0) return nullptr;
+    if (!g_imageBase || index < 0 || !gnames_ready()) return nullptr;
     const uint8_t* arrayBase = g_imageBase + kGNamesDataRva;
     if (!is_memory_valid(arrayBase, 8)) return nullptr;
     const uint8_t* const* data = *reinterpret_cast<const uint8_t* const* const*>(arrayBase);
@@ -405,7 +573,7 @@ const wchar_t* fname_text(int32_t index) {
 
 int32_t fname_count() {
     using bvr::pattern_scan::is_memory_valid;
-    if (!g_imageBase) return 0;
+    if (!g_imageBase || !gnames_ready()) return 0;
     const uint8_t* arrayBase = g_imageBase + kGNamesDataRva;
     if (!is_memory_valid(arrayBase, 8)) return 0;
     return *reinterpret_cast<const int32_t*>(arrayBase + 4);
@@ -413,7 +581,7 @@ int32_t fname_count() {
 
 const wchar_t* object_class_name(const void* obj) {
     using bvr::pattern_scan::is_memory_valid;
-    if (!g_imageBase || !obj) return nullptr;
+    if (!g_imageBase || !obj || !kUClassVtableRva) return nullptr;
     const uint8_t* o = static_cast<const uint8_t*>(obj);
     if (!is_memory_valid(o, kUObjectClassOffset + sizeof(void*))) return nullptr;
     const uint8_t* cls =
