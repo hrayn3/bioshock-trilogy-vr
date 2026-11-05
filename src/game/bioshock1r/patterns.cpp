@@ -192,13 +192,15 @@ bool bind_gnames() {
             int32_t max = *reinterpret_cast<const int32_t*>(p + 8);
             if (count < kMinNames || count > kMaxNames || max < count || !data) continue;
             if (!is_memory_valid(data, kProbe * sizeof(void*))) continue;
-            bool ok = true;
-            for (int32_t n = 0; ok && n < kProbe; ++n) {
+            // Recycled slots are legitimately null, so demand most, not all.
+            int32_t selfIndexed = 0;
+            for (int32_t n = 0; n < kProbe; ++n) {
                 const uint8_t* entry = data[n];
-                ok = entry && is_memory_valid(entry, kFNameEntryTextOffset + 2) &&
-                     *reinterpret_cast<const int32_t*>(entry) == n;
+                if (entry && is_memory_valid(entry, kFNameEntryTextOffset + 2) &&
+                    *reinterpret_cast<const int32_t*>(entry) == n)
+                    ++selfIndexed;
             }
-            if (!ok) continue;
+            if (selfIndexed < kProbe - 4) continue;
             if (found) { // two tables would mean this shape test is wrong
                 BVR_LOG("[b1r] name table ambiguous - class names stay off");
                 return false;
