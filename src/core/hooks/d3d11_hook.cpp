@@ -30,50 +30,17 @@ PresentFn g_origPresent = nullptr;
 ResizeBuffersFn g_origResizeBuffers = nullptr;
 std::atomic<bool> g_loggedFirstPresent{false};
 std::atomic<uint64_t> g_presentCount{0};
-std::atomic<bool> g_wantProbe{false};
+std::atomic<bool> g_wantMtProtect{false};
 
-void log_slots(const char* when, ID3D11DeviceContext* ctx) {
-    void** vt = *reinterpret_cast<void***>(ctx);
-    const int slots[] = {12, 13, 33};
-    for (int slot : slots) {
-        const uint8_t* f = static_cast<const uint8_t*>(vt[slot]);
-        HMODULE m = nullptr;
-        char name[64] = {};
-        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           reinterpret_cast<const char*>(f), &m);
-        if (m) GetModuleFileNameA(m, name, sizeof name);
-        const char* base = strrchr(name, '\\');
-        BVR_LOG("[probe] %s ctx=%p vt=%p slot %d -> %p %02X %02X %02X %02X %02X (%s)", when,
-                static_cast<void*>(ctx), static_cast<void*>(vt), slot, f, f[0], f[1], f[2], f[3],
-                f[4], base ? base + 1 : name);
-    }
-}
-
-// Test only: what SetMultithreadProtected changes, on the game's real context.
-void run_probe(IDXGISwapChain* swapchain) {
-    ID3D11Device* device = nullptr;
-    if (FAILED(swapchain->GetDevice(IID_PPV_ARGS(&device))) || !device) return;
-    ID3D11DeviceContext* ctx = nullptr;
-    device->GetImmediateContext(&ctx);
-    log_slots("before", ctx);
+// Protection rewrites the context's own function table to thread-safe entry
+// points, so it goes on before the inspector hooks that table.
+bool apply_mt_protect(ID3D11DeviceContext* context) {
     ID3D10Multithread* mt = nullptr;
-    if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&mt)))) {
-        BOOL was = mt->SetMultithreadProtected(TRUE);
-        BVR_LOG("[probe] protection set, was %d", was ? 1 : 0);
-        mt->Release();
-    }
-    log_slots("after", ctx);
-    ID3D11DeviceContext* again = nullptr;
-    device->GetImmediateContext(&again);
-    BVR_LOG("[probe] context re-fetched %p (first %p)", static_cast<void*>(again), static_cast<void*>(ctx));
-    log_slots("refetched", again);
-    again->Release();
-    bool rehook = frame_inspector::install(*reinterpret_cast<void***>(ctx));
-    BVR_LOG("[probe] rehooked %d", rehook ? 1 : 0);
-    log_slots("rehooked", ctx);
-    ctx->Release();
-    device->Release();
+    if (FAILED(context->QueryInterface(IID_PPV_ARGS(&mt)))) return false;
+    BOOL was = mt->SetMultithreadProtected(TRUE);
+    BVR_LOG("d3d11: multithread protection on (was %d)", was ? 1 : 0);
+    mt->Release();
+    return true;
 }
 
 std::atomic<uint32_t> g_lastPresentTid{0};
@@ -108,7 +75,6 @@ void LogSwapchainInfo(IDXGISwapChain* swapchain) {
 
 HRESULT WINAPI PresentDetour(IDXGISwapChain* swapchain, UINT syncInterval, UINT flags) {
     const uint64_t presents = g_presentCount.fetch_add(1, std::memory_order_relaxed);
-    if (g_wantProbe.exchange(false, std::memory_order_relaxed)) run_probe(swapchain);
     g_lastPresentTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
     // Cheap re-arm of our unhandled-exception filter (~every 10 s at 60 fps).
     // The game, the Steam overlay and the 2K SDK all install theirs after our
@@ -128,6 +94,9 @@ HRESULT WINAPI PresentDetour(IDXGISwapChain* swapchain, UINT syncInterval, UINT 
             if (context) {
                 if (diag::skip("inspector"))
                     BVR_LOG("BVR_SKIP: frame inspector NOT installed");
+                else if (g_wantMtProtect.load(std::memory_order_relaxed) &&
+                         apply_mt_protect(context))
+                    frame_inspector::install_in_table(*reinterpret_cast<void***>(context));
                 else
                     frame_inspector::install(*reinterpret_cast<void***>(context));
                 context->Release();
@@ -293,7 +262,7 @@ uint32_t last_present_tid() {
     return g_lastPresentTid.load(std::memory_order_relaxed);
 }
 
-void request_probe() { g_wantProbe.store(true, std::memory_order_relaxed); }
+void request_multithread_protect() { g_wantMtProtect.store(true, std::memory_order_relaxed); }
 
 uint64_t present_count() {
     return g_presentCount.load(std::memory_order_relaxed);

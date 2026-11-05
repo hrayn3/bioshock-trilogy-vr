@@ -1493,6 +1493,8 @@ void apply_stereo_only(bool on) {
 void init(const bvr::pattern_scan::ProcessImage& image) {
     g_imageBase = image.base;
     g_imageSize = image.size;
+    // The worker and the engine's texture uploads share the context, one call at a time.
+    if (patterns::kSceneBuildGameplayOuterRetRva) bvr::d3d11_hook::request_multithread_protect();
 }
 
 void handle_command(const char* args) {

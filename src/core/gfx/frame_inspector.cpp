@@ -1093,7 +1093,8 @@ void set_exclusive_thread(unsigned long tid) { g_exclusiveTid.store(tid, std::me
 
 uint32_t foreign_calls() { return g_foreignCalls.load(std::memory_order_relaxed); }
 
-bool install(void** ctxVtable) {
+namespace {
+bool install_impl(void** ctxVtable, bool inTable) {
     if (!ctxVtable) return false;
     capture_exe_range();
 
@@ -1135,6 +1136,18 @@ bool install(void** ctxVtable) {
          reinterpret_cast<void**>(&g_origExecCmdList), "ExecuteCommandList"},
     };
 
+    if (inTable) {
+        // The table belongs to this context and is writable. The entry points it
+        // holds under protection do not survive inline patching, so swap the
+        // pointers and leave D3D's code alone.
+        for (const Slot& s : slots) {
+            *s.original = ctxVtable[s.index];
+            ctxVtable[s.index] = s.detour;
+        }
+        BVR_LOG("[gfx] frame inspector: 15/15 context slots hooked in the table");
+        return true;
+    }
+
     int hooked = 0;
     for (const Slot& s : slots) {
         MH_STATUS status = MH_CreateHook(ctxVtable[s.index], s.detour, s.original);
@@ -1148,6 +1161,11 @@ bool install(void** ctxVtable) {
     BVR_LOG("[gfx] frame inspector: %d/15 context slots hooked", hooked);
     return hooked == 15;
 }
+} // namespace
+
+bool install(void** ctxVtable) { return install_impl(ctxVtable, false); }
+
+bool install_in_table(void** ctxVtable) { return install_impl(ctxVtable, true); }
 
 void set_cb_watch(const float* pattern, uint32_t patFirst, uint32_t patCount,
                   uint32_t capFirst, uint32_t capCount, uint32_t requiredBytes) {

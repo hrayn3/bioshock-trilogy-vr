@@ -16,6 +16,9 @@ namespace bvr::frame_inspector {
 // Hook the immediate-context vtable slots (fail-soft per slot). `ctxVtable`
 // is the vtable pointer harvested from the throwaway device's context.
 bool install(void** ctxVtable);
+// Same detours, written into the context's own function table. For a context
+// under multithread protection.
+bool install_in_table(void** ctxVtable);
 
 // Threading check: while a thread id is set, context calls from any other thread
 // are counted. 0 clears it.

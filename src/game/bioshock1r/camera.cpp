@@ -7,7 +7,6 @@
 #include "core/debug/value_scan.h"
 #include "core/gfx/frame_inspector.h"
 #include "core/gfx/hud_capture.h"
-#include "core/hooks/d3d11_hook.h"
 #include "core/ui/overlay.h"
 #include "core/debug/thread_prof.h"
 #include "core/input/swing.h"
@@ -665,8 +664,6 @@ void apply_command(const char* cmd, const char* args) {
         char line[32];
         _snprintf_s(line, sizeof line, _TRUNCATE, "vrstereo %s", args);
         scenedraw::handle_command(line);
-    } else if (strcmp(cmd, "d3dprobe") == 0) {
-        bvr::d3d11_hook::request_probe();
     } else if (strcmp(cmd, "vraer") == 0) {
         // Headset A/B: one eye per game frame in place of the stereo pair. `off`
         // leaves mono; `vrstereo on` returns to the pair.
