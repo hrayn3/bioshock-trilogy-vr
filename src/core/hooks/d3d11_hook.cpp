@@ -27,6 +27,48 @@ PresentFn g_origPresent = nullptr;
 ResizeBuffersFn g_origResizeBuffers = nullptr;
 std::atomic<bool> g_loggedFirstPresent{false};
 std::atomic<uint64_t> g_presentCount{0};
+std::atomic<bool> g_wantProbe{false};
+
+void log_slots(const char* when, ID3D11DeviceContext* ctx) {
+    void** vt = *reinterpret_cast<void***>(ctx);
+    for (int slot : {12, 13, 33}) {
+        const uint8_t* f = static_cast<const uint8_t*>(vt[slot]);
+        HMODULE m = nullptr;
+        char name[64] = {};
+        GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<const char*>(f), &m);
+        if (m) GetModuleFileNameA(m, name, sizeof name);
+        const char* base = strrchr(name, '\\');
+        BVR_LOG("[probe] %s ctx=%p vt=%p slot %d -> %p %02X %02X %02X %02X %02X (%s)", when,
+                static_cast<void*>(ctx), static_cast<void*>(vt), slot, f, f[0], f[1], f[2], f[3],
+                f[4], base ? base + 1 : name);
+    }
+}
+
+// Test only: what SetMultithreadProtected changes, on the game's real context.
+void run_probe(IDXGISwapChain* swapchain) {
+    ID3D11Device* device = nullptr;
+    if (FAILED(swapchain->GetDevice(IID_PPV_ARGS(&device))) || !device) return;
+    ID3D11DeviceContext* ctx = nullptr;
+    device->GetImmediateContext(&ctx);
+    log_slots("before", ctx);
+    ID3D10Multithread* mt = nullptr;
+    if (SUCCEEDED(ctx->QueryInterface(IID_PPV_ARGS(&mt)))) {
+        BOOL was = mt->SetMultithreadProtected(TRUE);
+        BVR_LOG("[probe] protection set, was %d", was ? 1 : 0);
+        mt->Release();
+    }
+    log_slots("after", ctx);
+    ID3D11DeviceContext* again = nullptr;
+    device->GetImmediateContext(&again);
+    BVR_LOG("[probe] context re-fetched %p (first %p)", static_cast<void*>(again), static_cast<void*>(ctx));
+    log_slots("refetched", again);
+    again->Release();
+    ctx->Release();
+    device->Release();
+}
+
 std::atomic<uint32_t> g_lastPresentTid{0};
 
 void LogSwapchainInfo(IDXGISwapChain* swapchain) {
@@ -59,6 +101,7 @@ void LogSwapchainInfo(IDXGISwapChain* swapchain) {
 
 HRESULT WINAPI PresentDetour(IDXGISwapChain* swapchain, UINT syncInterval, UINT flags) {
     const uint64_t presents = g_presentCount.fetch_add(1, std::memory_order_relaxed);
+    if (g_wantProbe.exchange(false, std::memory_order_relaxed)) run_probe(swapchain);
     g_lastPresentTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
     // Cheap re-arm of our unhandled-exception filter (~every 10 s at 60 fps).
     // The game, the Steam overlay and the 2K SDK all install theirs after our
@@ -242,6 +285,8 @@ bool install() {
 uint32_t last_present_tid() {
     return g_lastPresentTid.load(std::memory_order_relaxed);
 }
+
+void request_probe() { g_wantProbe.store(true, std::memory_order_relaxed); }
 
 uint64_t present_count() {
     return g_presentCount.load(std::memory_order_relaxed);

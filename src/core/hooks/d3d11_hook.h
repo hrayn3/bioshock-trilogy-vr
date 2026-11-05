@@ -20,4 +20,7 @@ uint64_t present_count();
 uint32_t last_present_tid();
 
 
+// Test only: logs what multithread protection does to the context, then leaves it on.
+void request_probe();
+
 } // namespace bvr::d3d11_hook
