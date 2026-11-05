@@ -36,6 +36,13 @@ Rig g_staging;
 bool g_dirty = false;
 
 std::thread g_thread;
+// The host can exit without destroying its instance, and destroying a joinable
+// std::thread terminates the process, which is the fault every run ended on.
+struct ThreadExitGuard {
+    ~ThreadExitGuard() {
+        if (g_thread.joinable()) g_thread.detach();
+    }
+} g_threadExitGuard;
 std::atomic<bool> g_running{false};
 FILETIME g_lastWrite{};
 uint64_t g_startMs = 0;

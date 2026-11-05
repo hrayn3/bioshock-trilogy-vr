@@ -2440,6 +2440,23 @@ bool process_is_elevated() {
 // this 32-bit process a plain HKLM open lands on the WOW6432Node view. NEVER
 // short-circuits - the authoritative test stays "did xrCreateInstance
 // succeed" (the registry can lie; the loader's own probe cannot).
+// Meta's 32-bit runtime faults on its own IPC thread soon after xrCreateInstance
+// succeeds: the jump lands off in unmapped memory with only
+// RuntimeIPCServiceClient_32.dll on the stack (dump from Meta Horizon on a
+// Quest 2, GOG BS1). The fallback below only sees failed calls, so it can never
+// catch this. Reads the same key the loader does: a 32-bit process is redirected
+// to the WOW6432Node copy.
+bool active_runtime_is_meta_32() {
+    // An explicit runtime (the simulator) beats the registry, as in the loader.
+    if (GetEnvironmentVariableW(L"XR_RUNTIME_JSON", nullptr, 0)) return false;
+    wchar_t val[MAX_PATH] = {};
+    DWORD len = sizeof(val);
+    if (RegGetValueW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Khronos\\OpenXR\\1", L"ActiveRuntime",
+                     RRF_RT_REG_SZ, nullptr, val, &len) != ERROR_SUCCESS)
+        return false;
+    return wcsstr(val, L"oculus_openxr_32") != nullptr;
+}
+
 void log_active_runtime_expectation() {
     HKEY key = nullptr;
     if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Khronos\\OpenXR\\1", 0,
@@ -2537,7 +2554,12 @@ void init_instance() {
 
     wchar_t shimDll[MAX_PATH];
     const bool shimPresent = shim_dll_path(shimDll);
-    const bool wantNative = _stricmp(mode, "steamvr") != 0;
+    const bool routeAroundMeta =
+        _stricmp(mode, "auto") == 0 && shimPresent && active_runtime_is_meta_32();
+    if (routeAroundMeta)
+        BVR_LOG("xr: active runtime is Meta's 32-bit one, which crashes the game - using "
+                "the SteamVR shim (xr.ini mode=native overrides this)");
+    const bool wantNative = _stricmp(mode, "steamvr") != 0 && !routeAroundMeta;
     const bool mayFallBack = shimPresent && _stricmp(mode, "native") != 0;
 
     XrResult r = XR_ERROR_RUNTIME_UNAVAILABLE;

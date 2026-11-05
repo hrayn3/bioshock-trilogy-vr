@@ -17,6 +17,8 @@ add_library(bioshockvr SHARED
     core/framework/dllmain.cpp
     core/framework/framework.cpp
     core/framework/framework.h
+    core/debug/thread_prof.cpp
+    core/debug/thread_prof.h
     core/debug/value_scan.cpp
     core/debug/value_scan.h
     core/gfx/blit.cpp
@@ -183,6 +185,8 @@ add_dependencies(bioshockvr bvr_version)
 
 target_include_directories(bioshockvr PRIVATE . "${CMAKE_BINARY_DIR}/generated")
 target_link_libraries(bioshockvr PRIVATE
+    psapi
+    winmm
     minhook
     imgui
     d3d11

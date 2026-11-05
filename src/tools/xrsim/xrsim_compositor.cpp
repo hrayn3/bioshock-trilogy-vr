@@ -150,6 +150,12 @@ std::mutex g_qMutex;
 std::condition_variable g_qCv;
 std::deque<EncodeJob> g_queue;
 std::thread g_encodeThread;
+// See xrsim_control.cpp: a joinable thread must not reach its destructor.
+struct EncodeThreadExitGuard {
+    ~EncodeThreadExitGuard() {
+        if (g_encodeThread.joinable()) g_encodeThread.detach();
+    }
+} g_encodeThreadExitGuard;
 std::atomic<bool> g_encodeRunning{false};
 
 // D3D11 state save/restore. Same slice core/gfx/blit.cpp already proves out

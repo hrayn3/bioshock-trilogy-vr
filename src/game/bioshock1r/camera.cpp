@@ -8,6 +8,7 @@
 #include "core/gfx/frame_inspector.h"
 #include "core/gfx/hud_capture.h"
 #include "core/ui/overlay.h"
+#include "core/debug/thread_prof.h"
 #include "core/input/swing.h"
 #include "core/input/xinput_bridge.h"
 #include "core/util/log.h"
@@ -391,6 +392,10 @@ void apply_command(const char* cmd, const char* args) {
             bvr::vr::fov_audit(nullptr, nullptr, nullptr, &bw, &bh);
             game_ini::log_status(bw, bh);
         }
+    } else if (strcmp(cmd, "vrprof") == 0) {
+        unsigned ms = 0;
+        sscanf_s(args, "%u", &ms);
+        bvr::debug::thread_prof_start(GetCurrentThreadId(), ms ? ms : 10000);
     } else if (strcmp(cmd, "recenter") == 0) {
         g_recenterRequested.store(true, std::memory_order_relaxed);
         BVR_LOG("[b1r] command: recenter");
