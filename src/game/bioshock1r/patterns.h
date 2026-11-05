@@ -296,7 +296,7 @@ inline constexpr uint32_t kMgrFlushSeenOffset = 0x54;    // stamped 1 per flush
 // engine's own setter so game-level checks (`client+0xDC && connected
 // global`) light up. UWindowsClient::Exec also handles a
 // "ToggleUseController" console command that calls the same setter.
-inline constexpr uint32_t kGameEnginePtrRva = 0x1375368;  // [.]->UGameEngine, +0x4C = Client
+inline uint32_t kGameEnginePtrRva = 0x1375368;  // [.]->UGameEngine, +0x4C = Client
 inline constexpr uint32_t kEngineClientOffset = 0x4C;
 inline uint32_t kClientVtableRva = 0xE4DBE0;    // RTTI .?AVUWindowsClient@@
 inline uint32_t kViewportVtableRva = 0xE4E448;  // RTTI .?AVUWindowsViewport@@
@@ -688,6 +688,11 @@ bool resolve(const bvr::pattern_scan::ProcessImage& image, Symbols& out);
 // On an unrecognised build, resolve() rebinds the non-const vtable and name
 // table RVAs above from the running image: the values shown are the Steam
 // build's, and they only stay in force there.
+
+// True once kGameEnginePtrRva is usable. On an unrecognised build the global is
+// found on demand, because the engine object only exists after init. Callers
+// must treat false as "no engine yet", exactly like a null pointer.
+bool engine_ptr_ready();
 
 // The M6 aim natives only (called by resolve; separate so a rescan is cheap).
 // Fail-soft per symbol - each miss is logged and leaves its slot null.

@@ -212,6 +212,54 @@ bool bind_gnames() {
     return true;
 }
 
+// Reads a pointer target without faulting. VirtualQuery results are cached per
+// region because a data-section scan feeds this millions of arbitrary values.
+class ReadableCache {
+public:
+    bool readable(const void* p) {
+        auto a = reinterpret_cast<uintptr_t>(p);
+        if (a < lo_ || a + sizeof(void*) > hi_) {
+            MEMORY_BASIC_INFORMATION mbi{};
+            if (!VirtualQuery(p, &mbi, sizeof(mbi))) return false;
+            lo_ = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+            hi_ = lo_ + mbi.RegionSize;
+            good_ = mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS));
+        }
+        return good_;
+    }
+private:
+    uintptr_t lo_ = 0, hi_ = 0;
+    bool good_ = false;
+};
+
+// The engine global: a slot in the image's writable data holding the one object
+// whose vtable is UGameEngine's. Identity comes from the vtable, not a guess.
+bool bind_engine_ptr() {
+    if (!kEngineVtableRva) return false;
+    const void* want = g_imageBase + kEngineVtableRva;
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(g_imageBase);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(g_imageBase + dos->e_lfanew);
+    const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
+    ReadableCache cache;
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
+        if (!(section->Characteristics & IMAGE_SCN_MEM_WRITE)) continue;
+        const uint8_t* begin = g_imageBase + section->VirtualAddress;
+        size_t size = section->Misc.VirtualSize;
+        for (size_t off = 0; off + sizeof(void*) <= size; off += sizeof(void*)) {
+            const void* object = *reinterpret_cast<const void* const*>(begin + off);
+            if ((reinterpret_cast<uintptr_t>(object) & 3) != 0 || !object) continue;
+            if (!cache.readable(object)) continue;
+            if (*reinterpret_cast<const void* const*>(object) != want) continue;
+            kGameEnginePtrRva = static_cast<uint32_t>(begin + off - g_imageBase);
+            BVR_LOG("[b1r] rebind engine global: RVA 0x%X", kGameEnginePtrRva);
+            return true;
+        }
+    }
+    return false;
+}
+
+bool g_enginePtrBound = true; // only an unrecognised build has to look for it
+
 bool gnames_ready() {
     if (g_gnamesBound) return true;
     static DWORD nextTry = 0;
@@ -436,6 +484,7 @@ bool resolve(const bvr::pattern_scan::ProcessImage& image, Symbols& out) {
         BVR_LOG("[b1r] log - the three numbers above are what a per-build offset table needs.");
         BVR_LOG("[b1r] ============================================================");
         g_gnamesBound = false;
+        g_enginePtrBound = false;
         rebind_vtables(image);
     }
 
@@ -552,6 +601,17 @@ void resolve_aim_natives(const bvr::pattern_scan::ProcessImage& image, Symbols& 
         BVR_LOG("[b1r] UAttackAbility::GetPerfectFireStart impl prologue mismatch at RVA 0x%X"
                 " - plasmid aim unavailable", kAbilityFireStartImplRva);
     }
+}
+
+bool engine_ptr_ready() {
+    if (g_enginePtrBound) return true;
+    if (!g_imageBase) return false;
+    static DWORD nextTry = 0;
+    DWORD now = GetTickCount();
+    if (static_cast<int32_t>(now - nextTry) < 0) return false;
+    nextTry = now + 2000; // the scan walks all of .data - never per call
+    g_enginePtrBound = bind_engine_ptr();
+    return g_enginePtrBound;
 }
 
 const wchar_t* fname_text(int32_t index) {

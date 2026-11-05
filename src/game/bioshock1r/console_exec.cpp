@@ -135,7 +135,7 @@ int seh_exec(ExecFn fn, void* obj, const wchar_t* wcmd) {
 // SEH-safe fetch of the UGameEngine object (vtable-identity checked).
 void* resolve_engine() {
     auto* base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
-    if (!base) return nullptr;
+    if (!base || !patterns::engine_ptr_ready()) return nullptr;
     __try {
         auto* engine = *reinterpret_cast<uint8_t**>(base + patterns::kGameEnginePtrRva);
         if (!engine) return nullptr;

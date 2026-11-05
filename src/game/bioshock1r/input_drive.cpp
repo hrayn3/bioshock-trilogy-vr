@@ -44,7 +44,7 @@ bool valid_ptr(const void* p) {
 // video re-init. Vtable identity (rebased RVA) is the safety check.
 bool resolve(Objects& out) {
     out.base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
-    if (!out.base) return false;
+    if (!out.base || !patterns::engine_ptr_ready()) return false;
 
     auto** enginePtr = reinterpret_cast<void**>(out.base + patterns::kGameEnginePtrRva);
     if (!valid_ptr(enginePtr) || !valid_ptr(*enginePtr)) return false;
