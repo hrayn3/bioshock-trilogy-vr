@@ -207,6 +207,9 @@ constexpr uint32_t kWorldInactiveIslandsOffset = 0x34;
 constexpr uint32_t kBodyVtableRva = 0xBFDD64;
 constexpr uint32_t kBodyFilterOffset = 0x2C;
 constexpr uint32_t kBodyMotionTypeOffset = 0xE8;
+constexpr uint32_t kLayerProjectile = 11;
+uint64_t g_watchUntilMs = 0;
+uint64_t g_lastWatchMs = 0;
 Tracked g_tracked[kMaxTracked];
 int g_trackedCount = 0;
 uint64_t g_lastTrackMs = 0;
@@ -251,6 +254,12 @@ int walk_island(void* island, const float hand[3]) {
                     *(static_cast<uint8_t*>(b) + kBodyMotionTypeOffset);
                 // Loose props anywhere on the map, everything else only nearby.
                 bool loose = motion != 4 && motion != 5;
+                if (g_watchUntilMs) {
+                    // `vrphys watch`: projectiles, to prove they clear the hand.
+                    if ((filter & 31) == kLayerProjectile)
+                        BVR_LOG("[phys] projectile %p at %.2f m from the hand", b, dist * 0.5f);
+                    continue;
+                }
                 if (g_nearLooseOnly ? !loose : dist > kNearHk) continue;
                 g_tracked[g_trackedCount].body = b;
                 memcpy(g_tracked[g_trackedCount].pos, p, 12);
@@ -278,6 +287,18 @@ int walk_islands(uint32_t arrayOffset, const float hand[3]) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
     return added;
+}
+
+void watch_tick(const float handHk[3]) {
+    uint64_t now = GetTickCount64();
+    if (now >= g_watchUntilMs) {
+        g_watchUntilMs = 0;
+        BVR_LOG("[phys] watch ended");
+        return;
+    }
+    if (now - g_lastWatchMs < 100) return;
+    g_lastWatchMs = now;
+    walk_islands(kWorldActiveIslandsOffset, handHk);
 }
 
 void near_scan(const float handHk[3]) {
@@ -393,6 +414,7 @@ void on_frame(const GamePose& gp, int hand) {
         g_nearPending = false;
         near_scan(pos);
     }
+    if (g_watchUntilMs) watch_tick(pos);
     bool sweeping = sweep_target(pos);
     memcpy(g_lastTarget, pos, sizeof g_lastTarget);
 
@@ -484,6 +506,9 @@ void handle_command(const char* args) {
     } else if (strncmp(args, "near", 4) == 0) {
         g_nearPending = true;
         g_nearLooseOnly = strstr(args, "loose") != nullptr;
+    } else if (strncmp(args, "watch", 5) == 0) {
+        g_watchUntilMs = GetTickCount64() + 6000;
+        BVR_LOG("[phys] watching projectiles for 6 s");
     } else if (strncmp(args, "sweep", 5) == 0) {
         int index = 0;
         sscanf_s(args + 5, "%d", &index);
