@@ -3,6 +3,7 @@
 #include "core/util/log.h"
 
 #include <windows.h>
+#include <mmsystem.h>
 #include <psapi.h>
 
 #include <algorithm>
