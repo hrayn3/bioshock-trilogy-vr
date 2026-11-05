@@ -168,6 +168,8 @@ std::atomic<uint32_t> g_lastCalcTid{0};
 std::atomic<uint32_t> g_call1Us{0}, g_call2Us{0};
 std::atomic<uint32_t> g_drainUsSum{0}; // since the last heartbeat
 std::atomic<bool> g_offload{false}; // second eye drain on the worker
+std::atomic<bool> g_offBoth{false};  // first eye too: build R overlaps drain L
+std::atomic<bool> g_pass1Offload{false};
 std::atomic<bool> g_offBusy{false};
 std::atomic<uint32_t> g_offloads{0};
 std::atomic<uint32_t> g_offJoinUsSum{0}; // since the last heartbeat
@@ -839,6 +841,11 @@ void __fastcall BuildDetour(void* ecx, void* edx, void* a1, void* a2, void* a3,
     // in maybe_second_build the same way.
     if (depth == 0 && g_stereo.load(std::memory_order_relaxed))
         bvr::vr::sr_push_eye(-1);
+    g_pass1Offload.store(depth == 0 && g_offBoth.load(std::memory_order_relaxed) &&
+                             g_stereo.load(std::memory_order_relaxed) &&
+                             callerRva == patterns::kSceneBuildGameplayRetRva &&
+                             outerRva == patterns::kSceneBuildGameplayOuterRetRva,
+                         std::memory_order_relaxed);
 
     LARGE_INTEGER t0, t1;
     QueryPerformanceCounter(&t0);
@@ -1145,7 +1152,8 @@ void __fastcall FlushPointDetour(void* ecx, void* edx, void* scene,
     if (g_forceInline.load(std::memory_order_relaxed)) {
         // Only a steady gameplay second eye: maybe_second_build gated this pass.
         bool offload = g_offload.load(std::memory_order_relaxed) &&
-                       g_secondPassTid.load(std::memory_order_relaxed) == GetCurrentThreadId();
+                       (g_secondPassTid.load(std::memory_order_relaxed) == GetCurrentThreadId() ||
+                        g_pass1Offload.exchange(false, std::memory_order_relaxed));
         int r = force_inline_flush(scene, group, offload);
         if (r > 0) {
             g_forcedInline.fetch_add(1, std::memory_order_relaxed);
@@ -1559,10 +1567,15 @@ void handle_command(const char* args) {
             BVR_LOG("[reentry] stereo off (hooks stay; 'reentry unhook' to drop)");
         }
     } else if (strcmp(verb, "offload") == 0) {
-        if (strncmp(rest, "on", 2) == 0 || strncmp(rest, "off", 3) == 0)
-            offload_set(strncmp(rest, "on", 2) == 0);
+        bool both = strncmp(rest, "both", 4) == 0;
+        if (strncmp(rest, "on", 2) == 0 || strncmp(rest, "off", 3) == 0 || both) {
+            offload_set(strncmp(rest, "off", 3) != 0);
+            g_offBoth.store(both, std::memory_order_relaxed);
+        }
         BVR_LOG("[reentry] offload %s, %u so far",
-                g_offload.load(std::memory_order_relaxed) ? "ON" : "off",
+                !g_offload.load(std::memory_order_relaxed)     ? "off"
+                : g_offBoth.load(std::memory_order_relaxed)    ? "BOTH eyes"
+                                                               : "second eye",
                 g_offloads.load(std::memory_order_relaxed));
     } else if (strcmp(verb, "1t") == 0) {
         // STRUCTURAL single-threading (session 8): flush-point hook forces
