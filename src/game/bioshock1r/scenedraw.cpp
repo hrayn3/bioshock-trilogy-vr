@@ -1432,7 +1432,10 @@ void kick_sampler(bool on) {
 // matters ON: 1t first so stereo's substrate gate sees 1T; camera mode is
 // just a request the core engages at session-ready. OFF reverses.
 void apply_vrstereo(bool on) {
-    if (!on && g_offload.load(std::memory_order_relaxed)) offload_set(false);
+    // The worker is proven on the GOG build only; its table sets the outer caller.
+    if (on != g_offload.load(std::memory_order_relaxed) &&
+        (!on || patterns::kSceneBuildGameplayOuterRetRva))
+        offload_set(on);
     if (on) {
         BVR_LOG("[reentry] VRSTEREO ON: sequencing 1t -> camera mode -> stereo");
         if (!g_forceInline.load(std::memory_order_relaxed))
