@@ -167,6 +167,12 @@ std::atomic<uint32_t> g_secondPassHits{0};
 std::atomic<uint32_t> g_lastCalcTid{0};
 std::atomic<uint32_t> g_call1Us{0}, g_call2Us{0};
 std::atomic<uint32_t> g_drainUsSum{0}; // since the last heartbeat
+std::atomic<bool> g_offload{false}; // second eye drain on the worker
+std::atomic<bool> g_offBusy{false};
+std::atomic<uint32_t> g_offloads{0};
+std::atomic<uint32_t> g_offJoinUsSum{0}; // since the last heartbeat
+std::atomic<uint32_t> g_offWorkUsSum{0};
+void offload_join();
 std::atomic<uint32_t> g_lastSecondDraws{0};
 std::atomic<uint32_t> g_callerRvas[4]{};
 
@@ -1017,11 +1023,6 @@ void __fastcall SubmitDetour(void* ecx, void* edx, FVec3* loc, FRot3* rot,
 // one mod-owned worker so the next tick can overlap it. The engine still sees
 // its inline branch, so its event protocol never runs. Everything that could
 // meet the worker joins first.
-std::atomic<bool> g_offload{false};
-std::atomic<bool> g_offBusy{false};
-std::atomic<uint32_t> g_offloads{0};
-std::atomic<uint32_t> g_offJoinUsSum{0}; // since the last heartbeat
-std::atomic<uint32_t> g_offWorkUsSum{0};
 HANDLE g_offKick = nullptr;
 HANDLE g_offDone = nullptr;
 DWORD g_offTid = 0;
