@@ -48,3 +48,37 @@ vtable, FOV range, class name through the `UClass` vtable.
 Verified live on GOG: the hands and weapon drive follows a simulated controller at 100 UU per
 metre, the 47-bone rig binds, the `CurrentHoldable` read names every carried weapon, and the
 wrench swing gate opens.
+
+## Full stereo on GOG
+
+`apply_gog_addresses()` holds the render table, keyed to the GOG exe's PE timestamp and size.
+Each address came from strings, RTTI, vtable slots and call-graph position, because GOG is a
+separate compile and not a shift from Steam. Every hook keeps its prologue check.
+
+Three things differ from Steam beyond addresses:
+
+- GOG has no frame-id pair, so `kFrameIdPairRva` is 0 and the second build skips its drain poll.
+  Stereo requires single-threaded render, so nothing can be in flight at that point.
+- Every Draw returns through Repaint (`0x5EC45B`), so the gameplay gate also checks Repaint's
+  return into the client tick (`0x5EA95E`).
+- Guard only the first 6 bytes of the submit prologue. The next bytes are a relocated address.
+
+Verified in the simulator: `VRSTEREO READY`, one second build per frame, 63 mm eye separation,
+three save loads with stereo armed, `vraim synccheck` canon 10/10.
+
+`tools/eye-check.ps1` is calibrated for Infinite and does not apply to this game.
+
+Not yet checked in a headset. The HUD panel looks different per eye in simulator captures even
+though the mod submits one texture at a fixed pose.
+
+## Frame rate on an i5-6600 and GTX 1070
+
+Stereo is limited by the game's main thread, not the GPU (main thread about 90% of a core, GPU
+about 35%). Simulator, one spot in the Nexus save, 1800x1800:
+
+| Settings in `Bioshock.ini` | Stereo frames/s |
+|---|---|
+| Reflections on, high-detail shadow maps on | 46 |
+| `RealTimeReflection=False`, `UseHighDetailShadowMaps=False` | 55 |
+| Those, plus `Shadows=False` | 60 |
+
