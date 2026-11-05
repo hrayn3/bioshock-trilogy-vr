@@ -105,6 +105,7 @@ void rebind_vtables(const bvr::pattern_scan::ProcessImage& image) {
     rebind_vtable(image, ".?AVAShockPlayer@@", kShockPlayerVtableRva);
     rebind_vtable(image, ".?AVAPlayerWeapon@@", kPlayerWeaponVtableRva);
     rebind_vtable(image, ".?AVAHands@@", kHandsVtableRva);
+    rebind_vtable(image, ".?AVSkeletonInstance@@", kSkeletonInstanceVtableRva);
     rebind_vtable(image, ".?AVUWindowsClient@@", kClientVtableRva);
     rebind_vtable(image, ".?AVUWindowsViewport@@", kViewportVtableRva);
     rebind_vtable(image, ".?AVUGameEngine@@", kEngineVtableRva);

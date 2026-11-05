@@ -459,7 +459,7 @@ inline uint32_t kHandsVtableRva = 0xD8A28C;         // .?AVAHands@@ (M7)
 // WEAPON rendered at the poked transform of the attach bone (engine-side
 // attachment follows the array). Two arrays: A (+0x48/+0x4C) feeds the by-index
 // path and the renderer; B (+0x54/+0x58) is the lazily-filled by-name path.
-inline constexpr uint32_t kSkeletonInstanceVtableRva = 0xE19ACC; // .?AVSkeletonInstance@@
+inline uint32_t kSkeletonInstanceVtableRva = 0xE19ACC; // .?AVSkeletonInstance@@
 inline constexpr uint32_t kActorMeshInstOffset = 0x128;  // AActor -> USkeletalMeshInstance*
 inline constexpr uint32_t kActorSkelInstOffset = 0x3FC;  // AActor -> SkeletonInstance*
 inline constexpr uint32_t kSkelInstActorOffset = 0x04;   // backref to the actor
