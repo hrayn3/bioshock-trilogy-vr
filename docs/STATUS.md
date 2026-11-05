@@ -7548,8 +7548,10 @@ real headset yet.
   default on the GOG build, inert elsewhere.
 - Meta's 32-bit runtime is routed to the SteamVR shim automatically unless `mode=native`.
 - `vrprof`: game-thread sampler. Per-frame VirtualQuery calls removed, 55 to 58 stereo frames/s.
-- Open lead: about 7% of the game thread blocks inside `free` (exe+495A9F, called from 0x503B41),
-  with or without the simulator.
+- The game thread spends about 9% waiting on its worker pool (event wait 0x495A90, called from the
+  job drain ending 0x503B41). That is the engine's own design, not a bug.
+- Both eyes redraw everything. The shadow map cannot be shared as it stands: one target is reused
+  per light and consumed at once, so reuse would need a saved copy per light.
 
 ## Session log (newest first)
 
