@@ -664,6 +664,16 @@ void apply_command(const char* cmd, const char* args) {
         char line[32];
         _snprintf_s(line, sizeof line, _TRUNCATE, "vrstereo %s", args);
         scenedraw::handle_command(line);
+    } else if (strcmp(cmd, "vraer") == 0) {
+        // Headset A/B: one eye per game frame in place of the stereo pair. `off`
+        // leaves mono; `vrstereo on` returns to the pair.
+        bool on = strncmp(args, "on", 2) == 0;
+        if (on) {
+            scenedraw::handle_command("vrstereo off");
+            bvr::vr::set_camera_mode(true);
+        }
+        bvr::vr::set_alternate_eye(on);
+        BVR_LOG("[b1r] command: vraer %s", on ? "on" : "off");
     } else if (strcmp(cmd, "vrpreset") == 0) {
         if (strncmp(args, "save", 4) == 0) save_vr_preset();
         else apply_vr_preset();
