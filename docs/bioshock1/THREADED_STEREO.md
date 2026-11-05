@@ -40,7 +40,17 @@ Going further means making a drain or a build cheaper.
 
 Off by default: `reentry offload on|off|status`. Any fault poisons reentry, as today.
 
-## Proof needed before it ships on
+## Results (GOG, 2026-11-05)
 
-Frame rate gain at the Nexus spot, 20 loads, weapon cycling, a 10-minute soak, screenshots of the
-hands in both eyes, and the SteamVR fake headset route.
+On by default on the GOG build with `vrstereo on`. `reentry offload off` restores inline.
+
+- Nexus spot, simulator: 52 to 66 stereo fps. Fake SteamVR headset: 54 to 60, which looks like that
+  display's cap.
+- Soak: 20 loads with weapon switching and firing, a save and focus change every 5 loads, then 4
+  minutes idle. About 26,000 offloads, no fault, one stall-watchdog line during the load cycles.
+- Both eyes look right in side-by-side captures. The viewmodel bone risk is untested in motion.
+- A drain still running at window close faulted and raised the game's "failed to shutdown" box on
+  the next launch. The teardown callback now stops offloading and joins first.
+- The join serves sent messages because Present on the worker may send to the window thread.
+
+Not proven: a real headset, a long session, busy combat scenes.
