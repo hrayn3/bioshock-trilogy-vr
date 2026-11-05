@@ -16,10 +16,15 @@ new:    build L  drain L  build R  tick ...
                                    drain R (worker)
 ```
 
-Every path that could meet the worker joins it first: build head, flush point, submit, and any
-drain on the game thread. Nothing overlaps except tick against the second drain. Expected pair
-time is about 13.5 ms, so about 74 fps. Offloading the first drain too would need two frames in
-flight and is a later stage.
+Every path that could meet the worker joins it first: build head, flush point, and any drain on
+the game thread. Submit does not: it runs straight after the hand-off and is the engine's own
+threaded-mode call. Nothing overlaps except tick and submit against the second drain.
+
+**Ceiling.** The drain enters a render lock at its head (0x4006F4) that the build also holds, so a
+build can never overlap a drain. The pair is therefore serial: build L, drain L, build R, drain R,
+about 15 ms at the Nexus spot, or 66 fps. Offloading both eyes hung and gained nothing: the game
+thread could retake the lock and then join a worker waiting for it (worker stalled at 0x4006FA).
+Going further means making a drain or a build cheaper.
 
 ## Critique
 
