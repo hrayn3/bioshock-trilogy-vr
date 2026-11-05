@@ -16,8 +16,6 @@
 #include <dxgi.h>
 #include <MinHook.h>
 
-#include <cstring>
-
 #include <atomic>
 
 namespace bvr::d3d11_hook {
@@ -32,16 +30,23 @@ std::atomic<bool> g_loggedFirstPresent{false};
 std::atomic<uint64_t> g_presentCount{0};
 std::atomic<bool> g_wantMtProtect{false};
 
-// Protection rewrites the context's own function table to thread-safe entry points.
-bool apply_mt_protect(ID3D11DeviceContext* context) {
+void apply_mt_protect(IDXGISwapChain* swapchain) {
+    ID3D11Device* device = nullptr;
+    if (FAILED(swapchain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device))))
+        return;
+    ID3D11DeviceContext* context = nullptr;
+    device->GetImmediateContext(&context);
     ID3D10Multithread* mt = nullptr;
-    if (FAILED(context->QueryInterface(IID_PPV_ARGS(&mt)))) return false;
-    BOOL was = mt->SetMultithreadProtected(TRUE);
-    BVR_LOG("d3d11: multithread protection on (was %d)", was ? 1 : 0);
-    mt->Release();
-    return true;
+    if (context &&
+        SUCCEEDED(context->QueryInterface(__uuidof(ID3D10Multithread),
+                                          reinterpret_cast<void**>(&mt)))) {
+        BOOL was = mt->SetMultithreadProtected(TRUE);
+        BVR_LOG("d3d11: multithread protection on (was %d)", was ? 1 : 0);
+        mt->Release();
+    }
+    if (context) context->Release();
+    device->Release();
 }
-
 std::atomic<uint32_t> g_lastPresentTid{0};
 
 void LogSwapchainInfo(IDXGISwapChain* swapchain) {
@@ -74,6 +79,7 @@ void LogSwapchainInfo(IDXGISwapChain* swapchain) {
 
 HRESULT WINAPI PresentDetour(IDXGISwapChain* swapchain, UINT syncInterval, UINT flags) {
     const uint64_t presents = g_presentCount.fetch_add(1, std::memory_order_relaxed);
+    if (g_wantMtProtect.exchange(false, std::memory_order_relaxed)) apply_mt_protect(swapchain);
     g_lastPresentTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
     // Cheap re-arm of our unhandled-exception filter (~every 10 s at 60 fps).
     // The game, the Steam overlay and the 2K SDK all install theirs after our
@@ -98,16 +104,6 @@ HRESULT WINAPI PresentDetour(IDXGISwapChain* swapchain, UINT syncInterval, UINT 
                 context->Release();
             }
             device->Release();
-        }
-    }
-    // Protection comes once draws have shown which context the game really uses:
-    // it rewrites that context's table, away from the inline hooks.
-    if (g_wantMtProtect.load(std::memory_order_relaxed)) {
-        if (ID3D11DeviceContext* game = frame_inspector::game_context()) {
-            g_wantMtProtect.store(false, std::memory_order_relaxed);
-            if (apply_mt_protect(game)) frame_inspector::install_in_table(*reinterpret_cast<void***>(game));
-            BVR_LOG("d3d11: game context %p, its table %p", static_cast<void*>(game),
-                    *reinterpret_cast<void**>(game));
         }
     }
     // Command seam, for adapters with no engine hook to poll from (session 35).
@@ -268,7 +264,9 @@ uint32_t last_present_tid() {
     return g_lastPresentTid.load(std::memory_order_relaxed);
 }
 
-void request_multithread_protect() { g_wantMtProtect.store(true, std::memory_order_relaxed); }
+void request_multithread_protect() {
+    g_wantMtProtect.store(true, std::memory_order_relaxed);
+}
 
 uint64_t present_count() {
     return g_presentCount.load(std::memory_order_relaxed);
