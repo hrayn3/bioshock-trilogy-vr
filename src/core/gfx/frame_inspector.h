@@ -17,6 +17,11 @@ namespace bvr::frame_inspector {
 // is the vtable pointer harvested from the throwaway device's context.
 bool install(void** ctxVtable);
 
+// Threading check: while a thread id is set, context calls from any other thread
+// are counted. 0 clears it.
+void set_exclusive_thread(unsigned long tid);
+uint32_t foreign_calls();
+
 // Arm a one-shot dump of the NEXT full Present-to-Present frame.
 //   mode 1 = lite  - events and resources only, no constant-buffer readback
 //   mode 2 = full  - plus a staging readback of the bound VS b0, ONCE PER

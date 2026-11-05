@@ -517,12 +517,13 @@ void heartbeat(uint32_t beatTid) {
     uint32_t calcOut = g_calcOutside.load(std::memory_order_relaxed);
     uint32_t forced = g_forcedInline.load(std::memory_order_relaxed);
     uint64_t presents = bvr::d3d11_hook::present_count();
-    BVR_LOG("[reentry] drain busy %u ms/s, offload worker %u ms/s, join wait %u ms/s (%u offloads, %u sent)",
+    BVR_LOG("[reentry] drain busy %u ms/s, offload worker %u ms/s, join wait %u ms/s (%u offloads, %u sent, %u foreign D3D calls)",
             g_drainUsSum.exchange(0, std::memory_order_relaxed) / 1000,
             g_offWorkUsSum.exchange(0, std::memory_order_relaxed) / 1000,
             g_offJoinUsSum.exchange(0, std::memory_order_relaxed) / 1000,
             g_offloads.load(std::memory_order_relaxed),
-            g_offSentPumped.load(std::memory_order_relaxed));
+            g_offSentPumped.load(std::memory_order_relaxed),
+            bvr::frame_inspector::foreign_calls());
     BVR_LOG("[reentry] mode=%s drain=%u/s flush=%u/s forced=%u/s build=%u/s "
             "submit=%u/s (nested=%u) 2nd=%u/s presents=%u/s "
             "calcview in=%u out=%u/s call1=%uus call2=%uus beatTid=%u "
@@ -1068,6 +1069,7 @@ DWORD WINAPI offload_thread(void*) {
                     g_lastExcCode.load(std::memory_order_relaxed),
                     g_lastExcRva.load(std::memory_order_relaxed));
         }
+        bvr::frame_inspector::set_exclusive_thread(0);
         g_offBusy.store(false, std::memory_order_release);
         SetEvent(g_offDone);
     }
@@ -1136,7 +1138,6 @@ bool offload_set(bool on) {
         HANDLE t = CreateThread(nullptr, 1 << 20, offload_thread, nullptr, 0, &g_offTid);
         if (!t) return false;
         CloseHandle(t);
-        bvr::d3d11_hook::request_multithread_protect();
         // A drain still running as the window closes faults, and the game then
         // shows its "failed to shutdown" box on the next launch.
         bvr::crash::set_teardown_callback([] {
@@ -1176,6 +1177,7 @@ int force_inline_flush(void* scene, void* group, bool offload) {
             g_offMxcsr = _mm_getcsr();
             __asm { fnstcw g_offFpu }
             ResetEvent(g_offDone);
+            bvr::frame_inspector::set_exclusive_thread(g_offTid);
             g_offBusy.store(true, std::memory_order_release);
             g_offloads.fetch_add(1, std::memory_order_relaxed);
             SetEvent(g_offKick);
@@ -1491,10 +1493,6 @@ void apply_stereo_only(bool on) {
 void init(const bvr::pattern_scan::ProcessImage& image) {
     g_imageBase = image.base;
     g_imageSize = image.size;
-    // Protection swaps the context's vtable, so asking later leaves the frame
-    // inspector's draw hooks on a table nothing calls any more. On the first
-    // Present it lands before they install.
-    if (patterns::kSceneBuildGameplayOuterRetRva) bvr::d3d11_hook::request_multithread_protect();
 }
 
 void handle_command(const char* args) {

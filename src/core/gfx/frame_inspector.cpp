@@ -43,6 +43,16 @@ thread_local int t_suppress = 0;
 // Lifetime call census per hooked slot (diagnostic): are the detours even
 // being called? Indexed by EventKind order below.
 std::atomic<uint32_t> g_callCensus[13]{};
+// While nonzero, only this thread should be touching the context.
+std::atomic<DWORD> g_exclusiveTid{0};
+std::atomic<uint32_t> g_foreignCalls{0};
+
+inline void note_call(int slot) {
+    g_callCensus[slot].fetch_add(1, std::memory_order_relaxed);
+    DWORD owner = g_exclusiveTid.load(std::memory_order_relaxed);
+    if (owner && owner != GetCurrentThreadId())
+        g_foreignCalls.fetch_add(1, std::memory_order_relaxed);
+}
 
 // Session 34: the adapter mesh veto (see the header). Atomic because it is set
 // from the game thread and read on the render thread.
@@ -566,7 +576,7 @@ Event& push_event(EventKind kind, const void* retAddr, void* espHint) {
 
 void STDMETHODCALLTYPE DrawIndexedDetour(ID3D11DeviceContext* ctx, UINT indexCount,
                                          UINT startIndex, INT baseVertex) {
-    g_callCensus[CxDrawIndexed].fetch_add(1, std::memory_order_relaxed);
+    note_call(CxDrawIndexed);
     if (t_suppress == 0) bvr::hud::on_draw_indexed(ctx);
     // Session 34: adapter mesh veto. Checked BEFORE recording on purpose - a
     // dropped draw did not happen, and a dump that lists it would be describing
@@ -607,7 +617,7 @@ void STDMETHODCALLTYPE DrawIndexedDetour(ID3D11DeviceContext* ctx, UINT indexCou
 }
 
 void STDMETHODCALLTYPE DrawDetour(ID3D11DeviceContext* ctx, UINT vertexCount, UINT startVertex) {
-    g_callCensus[CxDraw].fetch_add(1, std::memory_order_relaxed);
+    note_call(CxDraw);
     if (should_record()) {
         ++t_suppress;
         Event& ev = push_event(EventKind::Draw, _ReturnAddress(), _AddressOfReturnAddress());
@@ -665,7 +675,7 @@ void STDMETHODCALLTYPE DrawDetour(ID3D11DeviceContext* ctx, UINT vertexCount, UI
 void STDMETHODCALLTYPE DrawIndexedInstancedDetour(ID3D11DeviceContext* ctx, UINT indexCount,
                                                   UINT instances, UINT startIndex, INT baseVertex,
                                                   UINT startInstance) {
-    g_callCensus[CxDrawIdxInst].fetch_add(1, std::memory_order_relaxed);
+    note_call(CxDrawIdxInst);
     if (should_record()) {
         ++t_suppress;
         Event& ev = push_event(EventKind::DrawIndexedInstanced, _ReturnAddress(),
@@ -680,7 +690,7 @@ void STDMETHODCALLTYPE DrawIndexedInstancedDetour(ID3D11DeviceContext* ctx, UINT
 
 void STDMETHODCALLTYPE DrawInstancedDetour(ID3D11DeviceContext* ctx, UINT vertexCount,
                                            UINT instances, UINT startVertex, UINT startInstance) {
-    g_callCensus[CxDrawInst].fetch_add(1, std::memory_order_relaxed);
+    note_call(CxDrawInst);
     if (should_record()) {
         ++t_suppress;
         Event& ev = push_event(EventKind::DrawInstanced, _ReturnAddress(),
@@ -696,7 +706,7 @@ void STDMETHODCALLTYPE DrawInstancedDetour(ID3D11DeviceContext* ctx, UINT vertex
 void STDMETHODCALLTYPE OMSetRenderTargetsDetour(ID3D11DeviceContext* ctx, UINT numViews,
                                                 ID3D11RenderTargetView* const* rtvs,
                                                 ID3D11DepthStencilView* dsv) {
-    g_callCensus[CxSetRT].fetch_add(1, std::memory_order_relaxed);
+    note_call(CxSetRT);
     if (t_suppress == 0) bvr::hud::on_setrt(numViews, rtvs, dsv);
     if (t_suppress == 0) bvr::gfx_hud::on_setrt(numViews, rtvs, dsv);
     if (should_record()) {
@@ -713,7 +723,7 @@ void STDMETHODCALLTYPE OMSetRenderTargetsDetour(ID3D11DeviceContext* ctx, UINT n
 
 void STDMETHODCALLTYPE ClearRtvDetour(ID3D11DeviceContext* ctx, ID3D11RenderTargetView* rtv,
                                       const FLOAT color[4]) {
-    g_callCensus[CxClearRtv].fetch_add(1, std::memory_order_relaxed);
+    note_call(CxClearRtv);
     if (should_record()) {
         ++t_suppress;
         Event& ev = push_event(EventKind::ClearRtv, _ReturnAddress(), _AddressOfReturnAddress());
@@ -726,7 +736,7 @@ void STDMETHODCALLTYPE ClearRtvDetour(ID3D11DeviceContext* ctx, ID3D11RenderTarg
 
 void STDMETHODCALLTYPE ClearDsvDetour(ID3D11DeviceContext* ctx, ID3D11DepthStencilView* dsv,
                                       UINT flags, FLOAT depth, UINT8 stencil) {
-    g_callCensus[CxClearDsv].fetch_add(1, std::memory_order_relaxed);
+    note_call(CxClearDsv);
     if (should_record()) {
         ++t_suppress;
         Event& ev = push_event(EventKind::ClearDsv, _ReturnAddress(), _AddressOfReturnAddress());
@@ -738,7 +748,7 @@ void STDMETHODCALLTYPE ClearDsvDetour(ID3D11DeviceContext* ctx, ID3D11DepthStenc
 }
 
 void STDMETHODCALLTYPE DrawAutoDetour(ID3D11DeviceContext* ctx) {
-    g_callCensus[CxDrawAuto].fetch_add(1, std::memory_order_relaxed);
+    note_call(CxDrawAuto);
     if (should_record()) {
         ++t_suppress;
         Event& ev = push_event(EventKind::DrawAuto, _ReturnAddress(), _AddressOfReturnAddress());
@@ -749,7 +759,7 @@ void STDMETHODCALLTYPE DrawAutoDetour(ID3D11DeviceContext* ctx) {
 }
 
 void STDMETHODCALLTYPE DispatchDetour(ID3D11DeviceContext* ctx, UINT x, UINT y, UINT z) {
-    g_callCensus[CxDispatch].fetch_add(1, std::memory_order_relaxed);
+    note_call(CxDispatch);
     if (should_record()) {
         ++t_suppress;
         Event& ev = push_event(EventKind::Dispatch, _ReturnAddress(), _AddressOfReturnAddress());
@@ -764,7 +774,7 @@ void STDMETHODCALLTYPE CopySubResDetour(ID3D11DeviceContext* ctx, ID3D11Resource
                                         UINT dstSub, UINT dstX, UINT dstY, UINT dstZ,
                                         ID3D11Resource* src, UINT srcSub,
                                         const D3D11_BOX* box) {
-    g_callCensus[CxCopySubRes].fetch_add(1, std::memory_order_relaxed);
+    note_call(CxCopySubRes);
     if (should_record()) {
         ++t_suppress;
         Event& ev = push_event(EventKind::CopySubRes, _ReturnAddress(),
@@ -780,7 +790,7 @@ void STDMETHODCALLTYPE CopySubResDetour(ID3D11DeviceContext* ctx, ID3D11Resource
 
 void STDMETHODCALLTYPE CopyResDetour(ID3D11DeviceContext* ctx, ID3D11Resource* dst,
                                      ID3D11Resource* src) {
-    g_callCensus[CxCopyRes].fetch_add(1, std::memory_order_relaxed);
+    note_call(CxCopyRes);
     if (should_record()) {
         ++t_suppress;
         Event& ev = push_event(EventKind::CopyRes, _ReturnAddress(), _AddressOfReturnAddress());
@@ -794,7 +804,7 @@ void STDMETHODCALLTYPE CopyResDetour(ID3D11DeviceContext* ctx, ID3D11Resource* d
 void STDMETHODCALLTYPE UpdateSubResDetour(ID3D11DeviceContext* ctx, ID3D11Resource* dst,
                                           UINT dstSub, const D3D11_BOX* box, const void* data,
                                           UINT rowPitch, UINT depthPitch) {
-    g_callCensus[CxUpdateSubRes].fetch_add(1, std::memory_order_relaxed);
+    note_call(CxUpdateSubRes);
     // Session-41 opt-in tap: one relaxed load when disarmed (the load is
     // inside tap_maybe_capture's first line). t_suppress keeps our own
     // uploads out of the ring, same as the recorder below.
@@ -850,7 +860,7 @@ void STDMETHODCALLTYPE UpdateSubResDetour(ID3D11DeviceContext* ctx, ID3D11Resour
 
 void STDMETHODCALLTYPE ExecCmdListDetour(ID3D11DeviceContext* ctx, ID3D11CommandList* list,
                                          BOOL restore) {
-    g_callCensus[CxExecCmdList].fetch_add(1, std::memory_order_relaxed);
+    note_call(CxExecCmdList);
     if (should_record()) {
         ++t_suppress;
         Event& ev = push_event(EventKind::ExecCmdList, _ReturnAddress(),
@@ -1052,6 +1062,10 @@ void write_dump() {
 } // namespace
 
 // ---- public api -----------------------------------------------------------
+
+void set_exclusive_thread(unsigned long tid) { g_exclusiveTid.store(tid, std::memory_order_relaxed); }
+
+uint32_t foreign_calls() { return g_foreignCalls.load(std::memory_order_relaxed); }
 
 bool install(void** ctxVtable) {
     if (!ctxVtable) return false;
