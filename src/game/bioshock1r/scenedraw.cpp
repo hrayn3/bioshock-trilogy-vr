@@ -509,7 +509,11 @@ void heartbeat(uint32_t beatTid) {
     uint32_t calcOut = g_calcOutside.load(std::memory_order_relaxed);
     uint32_t forced = g_forcedInline.load(std::memory_order_relaxed);
     uint64_t presents = bvr::d3d11_hook::present_count();
-    BVR_LOG("[reentry] drain busy %u ms/s", g_drainUsSum.exchange(0, std::memory_order_relaxed) / 1000);
+    BVR_LOG("[reentry] drain busy %u ms/s, offload worker %u ms/s, join wait %u ms/s (%u offloads)",
+            g_drainUsSum.exchange(0, std::memory_order_relaxed) / 1000,
+            g_offWorkUsSum.exchange(0, std::memory_order_relaxed) / 1000,
+            g_offJoinUsSum.exchange(0, std::memory_order_relaxed) / 1000,
+            g_offloads.load(std::memory_order_relaxed));
     BVR_LOG("[reentry] mode=%s drain=%u/s flush=%u/s forced=%u/s build=%u/s "
             "submit=%u/s (nested=%u) 2nd=%u/s presents=%u/s "
             "calcview in=%u out=%u/s call1=%uus call2=%uus beatTid=%u "
@@ -789,6 +793,7 @@ void maybe_second_build(void* ecx, void* edx, void* a1, void* a2, void* a3,
 void __fastcall BuildDetour(void* ecx, void* edx, void* a1, void* a2, void* a3,
                             void* a4) {
     uint32_t tid = GetCurrentThreadId();
+    offload_join();
     int depth = g_activeDepth.fetch_add(1, std::memory_order_relaxed);
     if (depth == 0) g_activeTid.store(tid, std::memory_order_relaxed);
     uint32_t n = g_buildEntries.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -951,6 +956,7 @@ void* __fastcall FgCtorDetour(void* self, void* edx, void* scene, void* parentVi
 void __fastcall SubmitDetour(void* ecx, void* edx, FVec3* loc, FRot3* rot,
                              void* arg3) {
     uint32_t tid = GetCurrentThreadId();
+    offload_join();
     int depth = g_activeDepth.fetch_add(1, std::memory_order_relaxed);
     if (depth == 0) {
         g_activeTid.store(tid, std::memory_order_relaxed);
@@ -1007,6 +1013,83 @@ void __fastcall SubmitDetour(void* ecx, void* edx, FVec3* loc, FRot3* rot,
         g_activeTid.store(0, std::memory_order_relaxed);
 }
 
+// Offload (docs/bioshock1/THREADED_STEREO.md): the second eye's drain runs on
+// one mod-owned worker so the next tick can overlap it. The engine still sees
+// its inline branch, so its event protocol never runs. Everything that could
+// meet the worker joins first.
+std::atomic<bool> g_offload{false};
+std::atomic<bool> g_offBusy{false};
+std::atomic<uint32_t> g_offloads{0};
+std::atomic<uint32_t> g_offJoinUsSum{0}; // since the last heartbeat
+std::atomic<uint32_t> g_offWorkUsSum{0};
+HANDLE g_offKick = nullptr;
+HANDLE g_offDone = nullptr;
+DWORD g_offTid = 0;
+void* g_offMgr = nullptr;
+unsigned g_offMxcsr = 0;
+unsigned short g_offFpu = 0;
+
+// No C++ objects in this frame (SEH + unwinding = C2712).
+bool offload_drain(void* mgr) {
+    __try {
+        reinterpret_cast<RenderFn>(const_cast<uint8_t*>(g_imageBase) +
+                                   patterns::kDrainRva)(mgr, nullptr);
+        return true;
+    } __except (reentry_filter(GetExceptionCode(), GetExceptionInformation())) {
+        return false;
+    }
+}
+
+DWORD WINAPI offload_thread(void*) {
+    for (;;) {
+        WaitForSingleObject(g_offKick, INFINITE);
+        // The drain expects the game thread's floating point modes.
+        _mm_setcsr(g_offMxcsr);
+        __asm { fldcw g_offFpu }
+        LARGE_INTEGER t0, t1;
+        QueryPerformanceCounter(&t0);
+        bool ok = offload_drain(g_offMgr);
+        QueryPerformanceCounter(&t1);
+        g_offWorkUsSum.fetch_add(qpc_us(t0, t1), std::memory_order_relaxed);
+        if (!ok) {
+            g_offload.store(false, std::memory_order_relaxed);
+            g_stereo.store(false, std::memory_order_relaxed);
+            g_doubleCall.store(false, std::memory_order_relaxed);
+            g_poisoned.store(true, std::memory_order_relaxed);
+            BVR_LOG("[reentry] offloaded drain FAULTED code=0x%08X rva=0x%X - offload and "
+                    "stereo off, POISONED",
+                    g_lastExcCode.load(std::memory_order_relaxed),
+                    g_lastExcRva.load(std::memory_order_relaxed));
+        }
+        g_offBusy.store(false, std::memory_order_release);
+        SetEvent(g_offDone);
+    }
+}
+
+void offload_join() {
+    if (!g_offBusy.load(std::memory_order_acquire) || GetCurrentThreadId() == g_offTid) return;
+    LARGE_INTEGER t0, t1;
+    QueryPerformanceCounter(&t0);
+    while (WaitForSingleObject(g_offDone, 2000) == WAIT_TIMEOUT)
+        BVR_LOG("[reentry] offload join waited 2 s - worker stuck in the drain");
+    QueryPerformanceCounter(&t1);
+    g_offJoinUsSum.fetch_add(qpc_us(t0, t1), std::memory_order_relaxed);
+}
+
+bool offload_set(bool on) {
+    if (on && !g_offKick) {
+        g_offKick = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        g_offDone = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        HANDLE t = CreateThread(nullptr, 1 << 20, offload_thread, nullptr, 0, &g_offTid);
+        if (!t) return false;
+        CloseHandle(t);
+        bvr::d3d11_hook::request_multithread_protect();
+    }
+    offload_join();
+    g_offload.store(on, std::memory_order_relaxed);
+    return true;
+}
+
 // Forced-inline scene flush (session 8, the structural `1t`): reproduce the
 // flush-point's byte-confirmed INLINE branch - copy the args into the render
 // manager, stamp mode single-threaded, call the drain on this thread. The
@@ -1016,7 +1099,7 @@ void __fastcall SubmitDetour(void* ecx, void* edx, FVec3* loc, FRot3* rot,
 // null (engine too early - let the original decide), -1 on a fault (the
 // filter recorded code/rva). No C++ objects in this frame (SEH + unwinding
 // = C2712).
-int force_inline_flush(void* scene, void* group) {
+int force_inline_flush(void* scene, void* group, bool offload) {
     __try {
         uint8_t* mgr = *reinterpret_cast<uint8_t* const*>(
             g_imageBase + patterns::kRenderMgrGlobalRva);
@@ -1029,6 +1112,15 @@ int force_inline_flush(void* scene, void* group) {
             dst[i] = src[i];
         *reinterpret_cast<uint32_t*>(mgr + patterns::kMgrThreadedFlagOffset) = 0;
         *reinterpret_cast<uint32_t*>(mgr + patterns::kMgrFlushSeenOffset) = 1;
+        if (offload) {
+            g_offMgr = mgr;
+            g_offMxcsr = _mm_getcsr();
+            __asm { fnstcw g_offFpu }
+            g_offBusy.store(true, std::memory_order_release);
+            g_offloads.fetch_add(1, std::memory_order_relaxed);
+            SetEvent(g_offKick);
+            return 1;
+        }
         // Call through the drain's TARGET address, not a trampoline: the
         // DrainDetour (empty-slot guard + telemetry) must stay in the path.
         // Heartbeat consequence: the drain's caller RVA reads as a
@@ -1044,8 +1136,12 @@ int force_inline_flush(void* scene, void* group) {
 void __fastcall FlushPointDetour(void* ecx, void* edx, void* scene,
                                  void* group) {
     g_flushPointEntries.fetch_add(1, std::memory_order_relaxed);
+    offload_join();
     if (g_forceInline.load(std::memory_order_relaxed)) {
-        int r = force_inline_flush(scene, group);
+        // Only a steady gameplay second eye: maybe_second_build gated this pass.
+        bool offload = g_offload.load(std::memory_order_relaxed) &&
+                       g_secondPassTid.load(std::memory_order_relaxed) == GetCurrentThreadId();
+        int r = force_inline_flush(scene, group, offload);
         if (r > 0) {
             g_forcedInline.fetch_add(1, std::memory_order_relaxed);
             return;
@@ -1073,6 +1169,7 @@ void __fastcall FlushPointDetour(void* ecx, void* edx, void* scene,
 
 void __fastcall DrainDetour(void* self, void* edx) {
     uint32_t tid = GetCurrentThreadId();
+    offload_join();
     // Empty-slot guard (session-7 minidump forensics): the drain head loads
     // the submitted-frame context from [this+0xC] and walks its +0x40 member
     // three instructions in, with NO null check - entering with the slot
@@ -1282,6 +1379,7 @@ void kick_sampler(bool on) {
 // matters ON: 1t first so stereo's substrate gate sees 1T; camera mode is
 // just a request the core engages at session-ready. OFF reverses.
 void apply_vrstereo(bool on) {
+    if (!on && g_offload.load(std::memory_order_relaxed)) offload_set(false);
     if (on) {
         BVR_LOG("[reentry] VRSTEREO ON: sequencing 1t -> camera mode -> stereo");
         if (!g_forceInline.load(std::memory_order_relaxed))
@@ -1455,6 +1553,12 @@ void handle_command(const char* args) {
             g_stereo.store(false, std::memory_order_relaxed);
             BVR_LOG("[reentry] stereo off (hooks stay; 'reentry unhook' to drop)");
         }
+    } else if (strcmp(verb, "offload") == 0) {
+        if (strncmp(rest, "on", 2) == 0 || strncmp(rest, "off", 3) == 0)
+            offload_set(strncmp(rest, "on", 2) == 0);
+        BVR_LOG("[reentry] offload %s, %u so far",
+                g_offload.load(std::memory_order_relaxed) ? "ON" : "off",
+                g_offloads.load(std::memory_order_relaxed));
     } else if (strcmp(verb, "1t") == 0) {
         // STRUCTURAL single-threading (session 8): flush-point hook forces
         // the inline branch; numerator global untouched. Load-safe and

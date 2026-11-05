@@ -1,0 +1,41 @@
+# BS1 threaded stereo: design and critique
+
+Why: in stereo the game thread does everything, and the render queue is 66% of it (11.4 ms of a
+17.5 ms pair at the Nexus spot). In threaded mono the same work sits on a second thread.
+
+## Design
+
+Structural 1t stays. The flush point still takes our inline branch, so the engine's event protocol
+(the 0x61D38E deadlock) never runs. Only the second eye's drain changes: the flush writes the
+manager fields as before, then hands the drain to one mod-owned worker and returns. The game thread
+finishes the build and runs the next tick while the right eye renders.
+
+```
+now:    build L  drain L  build R  drain R  tick
+new:    build L  drain L  build R  tick ...
+                                   drain R (worker)
+```
+
+Every path that could meet the worker joins it first: build head, flush point, submit, and any
+drain on the game thread. Nothing overlaps except tick against the second drain. Expected pair
+time is about 13.5 ms, so about 74 fps. Offloading the first drain too would need two frames in
+flight and is a later stage.
+
+## Critique
+
+| Risk | Why it might bite | Answer |
+|---|---|---|
+| Tick uses the D3D context during the drain | Immediate contexts are not thread-safe | The numerator is untouched, so game code keeps its threaded paths. Also turn on the driver's multithread protection |
+| Tick changes what the drain reads | Threaded mode allows this by design, but the frame pool and second slot are unproven under inline | Soak test, look for torn hands or popping |
+| Bones written by tick while the right eye draws | Viewmodel could tear | Screenshot test. If it tears, snapshot or hold the tick |
+| Drain assumes the pump thread | Engine TLS or a thread id check | Fault shows on the first frame. The worker copies MXCSR and the x87 control word from the game thread |
+| A wait in the drain expects the pump | Stall | Join logs when it waits over 2 s |
+| Mod state assumes one render thread | Present runs on two threads, never at once | Join guarantees order |
+| Load or menu during the drain | The worst case historically | Only steady gameplay offloads, the join runs at every build head |
+
+Off by default: `reentry offload on|off|status`. Any fault poisons reentry, as today.
+
+## Proof needed before it ships on
+
+Frame rate gain at the Nexus spot, 20 loads, weapon cycling, a 10-minute soak, screenshots of the
+hands in both eyes, and the SteamVR fake headset route.

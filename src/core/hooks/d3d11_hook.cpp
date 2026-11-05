@@ -11,6 +11,7 @@
 #include "core/vr/openxr_runtime.h"
 
 #include <windows.h>
+#include <d3d10.h>
 #include <d3d11.h>
 #include <dxgi.h>
 #include <MinHook.h>
@@ -27,6 +28,25 @@ PresentFn g_origPresent = nullptr;
 ResizeBuffersFn g_origResizeBuffers = nullptr;
 std::atomic<bool> g_loggedFirstPresent{false};
 std::atomic<uint64_t> g_presentCount{0};
+std::atomic<bool> g_wantMtProtect{false};
+
+void apply_mt_protect(IDXGISwapChain* swapchain) {
+    ID3D11Device* device = nullptr;
+    if (FAILED(swapchain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device))))
+        return;
+    ID3D11DeviceContext* context = nullptr;
+    device->GetImmediateContext(&context);
+    ID3D10Multithread* mt = nullptr;
+    if (context &&
+        SUCCEEDED(context->QueryInterface(__uuidof(ID3D10Multithread),
+                                          reinterpret_cast<void**>(&mt)))) {
+        BOOL was = mt->SetMultithreadProtected(TRUE);
+        BVR_LOG("d3d11: multithread protection on (was %d)", was ? 1 : 0);
+        mt->Release();
+    }
+    if (context) context->Release();
+    device->Release();
+}
 std::atomic<uint32_t> g_lastPresentTid{0};
 
 void LogSwapchainInfo(IDXGISwapChain* swapchain) {
@@ -59,6 +79,7 @@ void LogSwapchainInfo(IDXGISwapChain* swapchain) {
 
 HRESULT WINAPI PresentDetour(IDXGISwapChain* swapchain, UINT syncInterval, UINT flags) {
     const uint64_t presents = g_presentCount.fetch_add(1, std::memory_order_relaxed);
+    if (g_wantMtProtect.exchange(false, std::memory_order_relaxed)) apply_mt_protect(swapchain);
     g_lastPresentTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
     // Cheap re-arm of our unhandled-exception filter (~every 10 s at 60 fps).
     // The game, the Steam overlay and the 2K SDK all install theirs after our
@@ -241,6 +262,10 @@ bool install() {
 
 uint32_t last_present_tid() {
     return g_lastPresentTid.load(std::memory_order_relaxed);
+}
+
+void request_multithread_protect() {
+    g_wantMtProtect.store(true, std::memory_order_relaxed);
 }
 
 uint64_t present_count() {

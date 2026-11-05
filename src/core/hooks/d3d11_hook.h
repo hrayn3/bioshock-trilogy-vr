@@ -19,4 +19,9 @@ uint64_t present_count();
 // multi-threaded render attribution - session 26, BS2 substrate work).
 uint32_t last_present_tid();
 
+// Ask the driver to serialise the immediate context, applied at the next
+// Present. For a mod that renders on a second thread. Additive: nothing changes
+// until something asks.
+void request_multithread_protect();
+
 } // namespace bvr::d3d11_hook
