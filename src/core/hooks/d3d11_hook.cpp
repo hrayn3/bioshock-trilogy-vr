@@ -16,6 +16,8 @@
 #include <dxgi.h>
 #include <MinHook.h>
 
+#include <cstring>
+
 #include <atomic>
 
 namespace bvr::d3d11_hook {
@@ -32,7 +34,8 @@ std::atomic<bool> g_wantProbe{false};
 
 void log_slots(const char* when, ID3D11DeviceContext* ctx) {
     void** vt = *reinterpret_cast<void***>(ctx);
-    for (int slot : {12, 13, 33}) {
+    const int slots[] = {12, 13, 33};
+    for (int slot : slots) {
         const uint8_t* f = static_cast<const uint8_t*>(vt[slot]);
         HMODULE m = nullptr;
         char name[64] = {};
