@@ -7550,6 +7550,10 @@ real headset yet.
 - `vrprof`: game-thread sampler. Per-frame VirtualQuery calls removed, 55 to 58 stereo frames/s.
 - The game thread spends about 9% waiting on its worker pool (event wait 0x495A90, called from the
   job drain ending 0x503B41). That is the engine's own design, not a bug.
+- Render queue share (`drain busy` heartbeat, Nexus spot): stereo 660 ms/s at 58 pairs, about
+  11.4 ms a pair on the game thread. Threaded mono: game thread 40% and render thread 44% of a core
+  at 90 frames/s. Structural 1t is therefore the biggest cost left. Lead: run the second-eye drain
+  on a mod-owned thread, so the engine's event protocol (the old deadlock) stays out of it.
 - Both eyes redraw everything. The shadow map cannot be shared as it stands: one target is reused
   per light and consumed at once, so reuse would need a saved copy per light.
 
