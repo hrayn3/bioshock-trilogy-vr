@@ -326,6 +326,7 @@ inline constexpr uint32_t kXInputSetStateIatRva = 0xBCF8DC;
 // UWindowsClient::Exec handles ToggleUseController/ResetFlashMovies and
 // forwards to its base chain (call 0x4E2790 at its tail). Exec is vtable
 // slot 65 (+0x104) on UWindowsClient; the seam calls the entries directly.
+inline constexpr uint32_t kClientExecVtblOffset = 0x104;
 inline constexpr uint32_t kViewportExecRva = 0x8525C0;
 inline constexpr uint32_t kClientExecRva = 0x850DE0;
 // UGameEngine::Exec (start via SEH-prologue walk from the SERVERTRAVEL /

@@ -149,6 +149,37 @@ void* resolve_engine() {
 
 enum class Entry { Viewport, Client, Engine };
 
+// On an unrecognised build the Exec RVAs are someone else's code, so the entry
+// comes from the object's own vtable or the command is refused. The engine
+// entry sits on the FExec subobject: its vtable's RTTI locator must report the
+// same this-adjustment we used, which proves the subobject really is there.
+void* exec_from_vtable(void* target, Entry entry) {
+    auto* base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
+    const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    uint8_t* imageEnd = base + nt->OptionalHeader.SizeOfImage;
+    __try {
+        auto** vtable = *reinterpret_cast<void***>(target);
+        auto* vt = reinterpret_cast<uint8_t*>(vtable);
+        if (vt < base || vt >= imageEnd) return nullptr;
+        void* fn = nullptr;
+        if (entry == Entry::Client) {
+            fn = vtable[patterns::kClientExecVtblOffset / sizeof(void*)];
+        } else if (entry == Entry::Engine) {
+            auto* locator = reinterpret_cast<uint32_t*>(vtable[-1]);
+            auto* loc = reinterpret_cast<uint8_t*>(locator);
+            if (loc < base || loc >= imageEnd) return nullptr;
+            if (locator[0] != 0 || locator[1] != patterns::kEngineExecThisOffset) return nullptr;
+            fn = vtable[0];
+        }
+        auto* code = static_cast<uint8_t*>(fn);
+        if (code < base || code >= imageEnd) return nullptr;
+        return fn;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return nullptr;
+    }
+}
+
 void run(const char* args, uint32_t rva, const char* label, Entry entry) {
     if (!args || !args[0]) {
         BVR_LOG("[b1r] exec: missing command text");
@@ -195,7 +226,12 @@ void run(const char* args, uint32_t rva, const char* label, Entry entry) {
     }
 
     auto* base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
-    auto fn = reinterpret_cast<ExecFn>(base + rva);
+    auto fn = patterns::rva_trusted() ? reinterpret_cast<ExecFn>(base + rva)
+                                      : reinterpret_cast<ExecFn>(exec_from_vtable(target, entry));
+    if (!fn) {
+        BVR_LOG("[b1r] exec: %s entry not verified on this build - '%ls' refused", label, wcmd);
+        return;
+    }
     int r = seh_exec(fn, target, wcmd);
     if (r == -1)
         BVR_LOG("[b1r] %s exec FAULTED on '%ls' (SEH caught - engine state "

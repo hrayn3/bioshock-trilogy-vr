@@ -21,6 +21,11 @@ Never hook a target that has not passed an identity check.
 
 Lookups that need live objects run on demand and retry, throttled to every 2 seconds.
 
+A newly found address can wake code that was dormant. Binding the engine global let the
+console seam run, and it then called a Steam-only function RVA. After adding any lookup,
+trace what it unblocks. Console entries now come from vtables, verified by the RTTI
+locator's this-adjustment, or the command is refused.
+
 ## Shape check
 
 A fire-start must end in the right `ret` size and read the documented pawn fields
