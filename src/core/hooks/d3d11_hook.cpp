@@ -69,6 +69,9 @@ void run_probe(IDXGISwapChain* swapchain) {
     BVR_LOG("[probe] context re-fetched %p (first %p)", static_cast<void*>(again), static_cast<void*>(ctx));
     log_slots("refetched", again);
     again->Release();
+    bool rehook = frame_inspector::install(*reinterpret_cast<void***>(ctx));
+    BVR_LOG("[probe] rehooked %d", rehook ? 1 : 0);
+    log_slots("rehooked", ctx);
     ctx->Release();
     device->Release();
 }
