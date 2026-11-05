@@ -166,6 +166,7 @@ std::atomic<uint32_t> g_calcOutside{0};
 std::atomic<uint32_t> g_secondPassHits{0};
 std::atomic<uint32_t> g_lastCalcTid{0};
 std::atomic<uint32_t> g_call1Us{0}, g_call2Us{0};
+std::atomic<uint32_t> g_drainUsSum{0}; // since the last heartbeat
 std::atomic<uint32_t> g_lastSecondDraws{0};
 std::atomic<uint32_t> g_callerRvas[4]{};
 
@@ -508,6 +509,7 @@ void heartbeat(uint32_t beatTid) {
     uint32_t calcOut = g_calcOutside.load(std::memory_order_relaxed);
     uint32_t forced = g_forcedInline.load(std::memory_order_relaxed);
     uint64_t presents = bvr::d3d11_hook::present_count();
+    BVR_LOG("[reentry] drain busy %u ms/s", g_drainUsSum.exchange(0, std::memory_order_relaxed) / 1000);
     BVR_LOG("[reentry] mode=%s drain=%u/s flush=%u/s forced=%u/s build=%u/s "
             "submit=%u/s (nested=%u) 2nd=%u/s presents=%u/s "
             "calcview in=%u out=%u/s call1=%uus call2=%uus beatTid=%u "
@@ -1108,6 +1110,8 @@ void __fastcall DrainDetour(void* self, void* edx) {
     reinterpret_cast<RenderFn>(g_drain.original)(self, edx); // never guarded
     QueryPerformanceCounter(&t1);
     g_call1Us.store(qpc_us(t0, t1), std::memory_order_relaxed);
+    // Render-queue time, the part that could in principle leave this thread.
+    g_drainUsSum.fetch_add(qpc_us(t0, t1), std::memory_order_relaxed);
 
     if (depth == 0) maybe_second_call(g_drain, self, edx, tid);
 
