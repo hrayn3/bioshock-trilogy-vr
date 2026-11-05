@@ -962,7 +962,8 @@ void* __fastcall FgCtorDetour(void* self, void* edx, void* scene, void* parentVi
 void __fastcall SubmitDetour(void* ecx, void* edx, FVec3* loc, FRot3* rot,
                              void* arg3) {
     uint32_t tid = GetCurrentThreadId();
-    offload_join();
+    // No offload join: this runs straight after the second eye's hand-off, and
+    // it is the engine's own threaded-mode call, made while a drain is running.
     int depth = g_activeDepth.fetch_add(1, std::memory_order_relaxed);
     if (depth == 0) {
         g_activeTid.store(tid, std::memory_order_relaxed);
@@ -1080,7 +1081,9 @@ void offload_join() {
 bool offload_set(bool on) {
     if (on && !g_offKick) {
         g_offKick = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-        g_offDone = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+        // Manual reset: the submit wakes the engine's pump, so the game thread
+        // and the pump can both be waiting here.
+        g_offDone = CreateEventW(nullptr, TRUE, TRUE, nullptr);
         HANDLE t = CreateThread(nullptr, 1 << 20, offload_thread, nullptr, 0, &g_offTid);
         if (!t) return false;
         CloseHandle(t);
@@ -1117,6 +1120,7 @@ int force_inline_flush(void* scene, void* group, bool offload) {
             g_offMgr = mgr;
             g_offMxcsr = _mm_getcsr();
             __asm { fnstcw g_offFpu }
+            ResetEvent(g_offDone);
             g_offBusy.store(true, std::memory_order_release);
             g_offloads.fetch_add(1, std::memory_order_relaxed);
             SetEvent(g_offKick);
