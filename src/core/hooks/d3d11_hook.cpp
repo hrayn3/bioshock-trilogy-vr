@@ -31,6 +31,10 @@ std::atomic<uint64_t> g_presentCount{0};
 std::atomic<bool> g_wantMtProtect{false};
 
 void apply_mt_protect(IDXGISwapChain* swapchain) {
+    if (diag::skip("mtprotect")) {
+        BVR_LOG("BVR_SKIP: multithread protection NOT applied");
+        return;
+    }
     ID3D11Device* device = nullptr;
     if (FAILED(swapchain->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&device))))
         return;
