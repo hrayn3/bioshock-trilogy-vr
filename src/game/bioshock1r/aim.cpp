@@ -1762,6 +1762,8 @@ void* learned_weapon_object() {
     return g_objRight;
 }
 
+const char* weapon_key() { return g_weaponKey.c_str(); }
+
 bool weapon_key_is(const char* name) {
     // The profile key IS the equipped holdable's class name, maintained by
     // update_weapon_profile off Hands.CurrentHoldable. Session 31 reuses it as

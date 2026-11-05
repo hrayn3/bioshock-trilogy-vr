@@ -1100,6 +1100,17 @@ bool barrel_ref_axis(float d0[3]) {
     return true;
 }
 
+bool weapon_frame(float origin[3], float axis[3]) {
+    if (!barrel_ref_axis(axis)) return false;
+    int first = 0, last = 0, anchor = 0;
+    cluster_of(1, &first, &last, &anchor);
+    if (anchor < 0 || anchor >= g_boneCount) return false;
+    const float* pw = g_ref[patterns::kBoneWeaponAttach].p;
+    const float* pa = g_ref[anchor].p;
+    for (int i = 0; i < 3; ++i) origin[i] = pw[i] - pa[i];
+    return true;
+}
+
 bool drive(const FrameContext& ctx, void* handsActor, const GamePose& gp, int hand) {
     // Telemetry window: opened here (the once-per-frame pass-1 path) so every
     // module's lines for one sample land together in the log.

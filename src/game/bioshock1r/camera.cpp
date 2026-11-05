@@ -19,6 +19,7 @@
 #include "game/bioshock1r/game_ini.h"
 #include "core/vr/openxr_runtime.h"
 #include "game/bioshock1r/hands.h"
+#include "game/bioshock1r/physhand.h"
 #include "game/bioshock1r/input_drive.h"
 #include "game/bioshock1r/patterns.h"
 #include "game/bioshock1r/recorder.h"
@@ -643,6 +644,8 @@ void apply_command(const char* cmd, const char* args) {
         hands::handle_command(args); // M7 viewmodel; logs its own echoes
     } else if (strcmp(cmd, "vrbones") == 0) {
         bones::handle_command(args); // M7-v2 skeleton probes; logs its own echoes
+    } else if (strcmp(cmd, "vrphys") == 0) {
+        physhand::handle_command(args); // logs its own echoes
     } else if (strcmp(cmd, "vrbody") == 0) {
         body::handle_command(args); // M7.5 yaw transfer; logs its own echoes
     } else if (strcmp(cmd, "vrrec") == 0) {

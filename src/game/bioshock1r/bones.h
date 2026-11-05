@@ -128,6 +128,9 @@ float lock_delta_mag();
 // world barrel dir = target rotation (x) d0 (see the impl derivation). False
 // until a reference pose exists. Game thread.
 bool barrel_ref_axis(float d0[3]);
+// The weapon's base point (from the drive anchor, UU) and its axis, both in the
+// drive target's local frame. False until the rig has a reference pose.
+bool weapon_frame(float origin[3], float axis[3]);
 
 // Overlay section (render thread only).
 void draw_debug_ui();

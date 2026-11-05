@@ -393,6 +393,27 @@ inline constexpr uint32_t kWeaponFireStartVtblOffset = 0x304;    // AWeapon vtab
 inline constexpr uint32_t kExpectedWeaponFireStartImplRva = 0x226840;
 inline constexpr uint32_t kAbilityFireStartImplRva = 0x1BC220;   // direct call target
 inline constexpr uint8_t kAbilityFireStartPrologue[6] = {0x55, 0x8B, 0xEC, 0x83, 0xE4, 0xF8};
+// Havok on the GOG build (ENGINE_NOTES "Havok on the GOG build"). Zero on any
+// other build, which leaves physhand inert.
+inline uint32_t kHkTlsSlotRva = 0;
+inline uint32_t kHkRemoveRefRva = 0;
+inline uint32_t kHkCapsuleCtorRva = 0;
+inline uint32_t kHkCinfoCtorRva = 0;
+inline uint32_t kHkBodyCtorRva = 0;
+inline uint32_t kHkAddPropertyRva = 0;
+inline uint32_t kHkAddEntityRva = 0;
+inline uint32_t kHkRemoveEntityRva = 0;
+inline uint32_t kHkWarpRva = 0;
+inline uint32_t kHkQueueKeyframeRva = 0;
+inline uint32_t kHavokActorVtableRva = 0;
+inline constexpr uint32_t kActorLevelOffset = 0xFC;
+inline constexpr uint32_t kLevelHavokOffset = 0x427C;
+inline constexpr uint32_t kHavokWorldOffset = 0x24;
+inline constexpr uint32_t kHkWorldCriticalLockOffset = 0x8C;
+inline constexpr uint32_t kHkRefCountOffset = 6;
+inline constexpr uint32_t kHkBodyPosOffset = 0x120;
+inline constexpr uint32_t kHkCapsuleBytes = 0x40;
+inline constexpr uint32_t kHkBodyBytes = 0x220;
 inline constexpr uint32_t kWeaponOwnerOffset = 0x454;      // AWeapon -> owning pawn
 inline constexpr uint32_t kAbilityInstigatorOffset = 0xF0; // UAttackAbility -> instigator
 // AActor field offsets used by the fire path (from the APawn::GetViewPoint /

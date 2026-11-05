@@ -3,6 +3,7 @@
 #include "core/util/log.h"
 
 #include <windows.h>
+#include <dbghelp.h>
 #include <mmsystem.h>
 #include <psapi.h>
 
@@ -37,6 +38,10 @@ DWORD WINAPI sample_thread(void* arg) {
         return 0;
     }
     std::vector<uint32_t> eips(kMaxSamples);
+    // A wait and a busy loop both land in ntdll; the top of the stack tells them
+    // apart by naming who called in.
+    constexpr size_t kStackDwords = 48;
+    std::vector<uint32_t> stacks(kMaxSamples * kStackDwords);
     size_t n = 0;
     timeBeginPeriod(1);
     ULONGLONG end = GetTickCount64() + job.ms;
@@ -45,6 +50,10 @@ DWORD WINAPI sample_thread(void* arg) {
             CONTEXT c{};
             c.ContextFlags = CONTEXT_CONTROL;
             bool ok = GetThreadContext(t, &c) != 0;
+            SIZE_T got = 0;
+            if (ok)
+                ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(c.Esp),
+                                  &stacks[n * kStackDwords], kStackDwords * 4, &got);
             ResumeThread(t);
             if (ok) eips[n++] = c.Eip;
         }
@@ -91,6 +100,53 @@ DWORD WINAPI sample_thread(void* arg) {
     for (size_t i = 0; i < list.size() && i < 12 && list[i].hits; ++i)
         BVR_LOG("[prof] %5.1f%% %s", 100.0 * list[i].hits / (n ? n : 1), list[i].name.c_str());
     BVR_LOG("[prof] %5.1f%% outside any module", 100.0 * unknown / (n ? n : 1));
+
+    // System code by symbol, with the nearest caller inside the game or the mod.
+    HANDLE proc = GetCurrentProcess();
+    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+    SymInitialize(proc, nullptr, TRUE);
+    const uintptr_t selfBase = [] {
+        HMODULE m = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(&thread_prof_start), &m);
+        return reinterpret_cast<uintptr_t>(m);
+    }();
+    auto mod_of = [&](uintptr_t a) -> const Mod* {
+        for (const Mod& m : list)
+            if (a >= m.base && a < m.base + m.size) return &m;
+        return nullptr;
+    };
+    std::map<std::string, size_t> sys;
+    for (size_t i = 0; i < n; ++i) {
+        const Mod* m = mod_of(eips[i]);
+        if (!m || m->base == exeBase || m->base == selfBase) continue;
+        char buf[sizeof(SYMBOL_INFO) + 128] = {};
+        SYMBOL_INFO* si = reinterpret_cast<SYMBOL_INFO*>(buf);
+        si->SizeOfStruct = sizeof(SYMBOL_INFO);
+        si->MaxNameLen = 127;
+        DWORD64 disp = 0;
+        std::string name = SymFromAddr(proc, eips[i], &disp, si) ? si->Name : "?";
+        std::string caller = "-";
+        for (size_t k = 0; k < kStackDwords; ++k) {
+            uintptr_t v = stacks[i * kStackDwords + k];
+            const Mod* c = mod_of(v);
+            if (!c || (c->base != exeBase && c->base != selfBase)) continue;
+            char hex[32];
+            sprintf_s(hex, "%s+%X", c->base == exeBase ? "exe" : "mod",
+                      static_cast<unsigned>(v - c->base));
+            caller = hex;
+            break;
+        }
+        ++sys[m->name + "!" + name + " < " + caller];
+    }
+    SymCleanup(proc);
+    std::vector<std::pair<size_t, std::string>> sysTop;
+    for (auto& kv : sys) sysTop.push_back({kv.second, kv.first});
+    std::sort(sysTop.rbegin(), sysTop.rend());
+    for (size_t i = 0; i < sysTop.size() && i < 30; ++i)
+        BVR_LOG("[prof] sys %5.2f%% %s", 100.0 * sysTop[i].first / (n ? n : 1),
+                sysTop[i].second.c_str());
     std::vector<std::pair<size_t, uint32_t>> top;
     for (auto& kv : bins) top.push_back({kv.second, kv.first});
     std::sort(top.rbegin(), top.rend());

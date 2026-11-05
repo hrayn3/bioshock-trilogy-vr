@@ -110,6 +110,7 @@ void rebind_vtables(const bvr::pattern_scan::ProcessImage& image) {
     rebind_vtable(image, ".?AVUWindowsViewport@@", kViewportVtableRva);
     rebind_vtable(image, ".?AVUGameEngine@@", kEngineVtableRva);
     rebind_vtable(image, ".?AVUClass@@", kUClassVtableRva);
+    rebind_vtable(image, ".?AVAHavokActor@@", kHavokActorVtableRva);
 }
 
 void apply_gog_addresses() {
@@ -134,6 +135,16 @@ void apply_gog_addresses() {
     kFgSceneNodeVtableRva = 0xDC1B14;
     kXInputGetStateIatRva = 0xBC6A7C;
     kXInputSetStateIatRva = 0xBC6A80;
+    kHkTlsSlotRva = 0x117EC84;
+    kHkRemoveRefRva = 0x60E630;
+    kHkCapsuleCtorRva = 0x7F6B20;
+    kHkCinfoCtorRva = 0x6DB570;
+    kHkBodyCtorRva = 0x6D0780;
+    kHkAddPropertyRva = 0x6D2960;
+    kHkAddEntityRva = 0x6C4030;
+    kHkRemoveEntityRva = 0x6C41D0;
+    kHkWarpRva = 0x6D0E30;
+    kHkQueueKeyframeRva = 0x2C0D70;
     static const uint8_t build[sizeof kSceneBuildPrologue] = {0x55, 0x8B, 0xEC, 0x83, 0xE4,
                                                               0xF0, 0x6A, 0xFF, 0x68};
     memcpy(kSceneBuildPrologue, build, sizeof build);
