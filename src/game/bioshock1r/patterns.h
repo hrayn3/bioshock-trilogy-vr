@@ -22,7 +22,7 @@ namespace bvr::b1r::patterns {
 // and then mis-addressed. Hook installs survive that (they are prologue- and
 // vtable-gated and refuse), but the object-scan KEYS degrade to "search memory
 // for an arbitrary constant, then write to whatever passes a plausibility
-// test". Those are gated on rva_trusted() instead.
+// test". Object scans therefore run only on RTTI-found vtables (zero if absent).
 inline constexpr uint32_t kHostTimeDateStamp = 0x6256F776;
 inline constexpr uint32_t kHostSizeOfImage = 0x01677000;
 inline constexpr uint64_t kHostFileBytes = 21214720;

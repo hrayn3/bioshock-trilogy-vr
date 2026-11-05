@@ -328,18 +328,19 @@ bool run_object_scan(ObjectScan& scan, uint32_t vtableRva, uint32_t needBytes,
                      ObjectAccept accept, void* user, ScanResult& out) {
     out = ScanResult{};
     if (!g_imageBase || !accept) return true; // nothing to search: complete and empty
-    // On an unrecognised build the vtable RVA is an arbitrary constant, and the
-    // callers of this function WRITE to what it returns. Searching memory for a
-    // meaningless value and then poking the winner is the one failure mode worth
-    // refusing outright (session 27).
-    if (!g_rvaTrusted) {
+    // Zero means the RTTI lookup found no such class on this build. The callers
+    // WRITE to what this returns, so searching for a guessed vtable is the one
+    // failure worth refusing outright (session 27). A vtable RTTI did find is
+    // as good as a recognised build's: every accept callback then checks its
+    // fields against live data before anything is chosen.
+    if (!vtableRva) {
         static bool once = false;
         if (!once) {
             once = true;
-            BVR_LOG("[b1r] object scans DISABLED - the host build is not the one these vtable "
-                    "addresses came from (see the build block above)");
+            BVR_LOG("[b1r] object scan DISABLED - RTTI did not find this class on the host "
+                    "build (see the rebind lines above)");
         }
-        out.path = "disabled (unverified build)";
+        out.path = "disabled (class not found)";
         out.disabled = true;
         return true;
     }
