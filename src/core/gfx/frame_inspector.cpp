@@ -47,11 +47,37 @@ std::atomic<uint32_t> g_callCensus[13]{};
 std::atomic<DWORD> g_exclusiveTid{0};
 std::atomic<uint32_t> g_foreignCalls{0};
 
+// Names each distinct route into the context from the wrong thread, once.
+void note_foreign(int slot) {
+    g_foreignCalls.fetch_add(1, std::memory_order_relaxed);
+    static std::atomic<int> s_logged{0};
+    static std::atomic<uint32_t> s_seen[32];
+    void* frames[14];
+    USHORT n = RtlCaptureStackBackTrace(2, 14, frames, nullptr);
+    uintptr_t exe = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    char line[160];
+    int used = 0;
+    uint32_t hash = static_cast<uint32_t>(slot) * 2654435761u;
+    for (USHORT i = 0; i < n; ++i) {
+        uintptr_t a = reinterpret_cast<uintptr_t>(frames[i]);
+        if (a < exe || a - exe >= 0x2000000) continue; // the exe's image
+        hash = (hash ^ static_cast<uint32_t>(a - exe)) * 16777619u;
+        if (used < 130) used += sprintf_s(line + used, sizeof line - used, " %X", static_cast<unsigned>(a - exe));
+    }
+    line[used] = 0;
+    for (auto& e : s_seen) {
+        uint32_t cur = e.load(std::memory_order_relaxed);
+        if (cur == hash) return;
+        if (cur == 0 && e.compare_exchange_strong(cur, hash)) break;
+    }
+    if (s_logged.fetch_add(1, std::memory_order_relaxed) < 32)
+        BVR_LOG("[d3d] foreign call slot=%d tid=%lu exe:%s", slot, GetCurrentThreadId(), line);
+}
+
 inline void note_call(int slot) {
     g_callCensus[slot].fetch_add(1, std::memory_order_relaxed);
     DWORD owner = g_exclusiveTid.load(std::memory_order_relaxed);
-    if (owner && owner != GetCurrentThreadId())
-        g_foreignCalls.fetch_add(1, std::memory_order_relaxed);
+    if (owner && owner != GetCurrentThreadId()) note_foreign(slot);
 }
 
 // Session 34: the adapter mesh veto (see the header). Atomic because it is set
