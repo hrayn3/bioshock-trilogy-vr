@@ -11,6 +11,7 @@
 #include "core/vr/openxr_runtime.h"
 
 #include <windows.h>
+#include <d3d10.h>
 #include <d3d11.h>
 #include <dxgi.h>
 #include <MinHook.h>
