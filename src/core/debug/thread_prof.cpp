@@ -6,6 +6,7 @@
 #include <dbghelp.h>
 #include <mmsystem.h>
 #include <psapi.h>
+#include <tlhelp32.h>
 
 #include <algorithm>
 #include <atomic>
@@ -25,6 +26,40 @@ struct Job {
     uint32_t ms;
 };
 
+struct ThreadCpu {
+    DWORD tid;
+    uint64_t cpu100ns;
+    uintptr_t start;
+};
+
+std::vector<ThreadCpu> thread_cpu() {
+    std::vector<ThreadCpu> out;
+    using QueryFn = LONG(WINAPI*)(HANDLE, int, void*, ULONG, ULONG*);
+    auto query = reinterpret_cast<QueryFn>(
+        GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationThread"));
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) return out;
+    THREADENTRY32 te{};
+    te.dwSize = sizeof te;
+    for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+        if (te.th32OwnerProcessID != GetCurrentProcessId()) continue;
+        HANDLE h = OpenThread(THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
+        if (!h) continue;
+        FILETIME a, b, k, u;
+        if (GetThreadTimes(h, &a, &b, &k, &u)) {
+            uint64_t cpu = (uint64_t(k.dwHighDateTime) << 32 | k.dwLowDateTime) +
+                           (uint64_t(u.dwHighDateTime) << 32 | u.dwLowDateTime);
+            uintptr_t start = 0;
+            if (query) query(h, 9 /* ThreadQuerySetWin32StartAddress */, &start, sizeof start,
+                             nullptr);
+            out.push_back({te.th32ThreadID, cpu, start});
+        }
+        CloseHandle(h);
+    }
+    CloseHandle(snap);
+    return out;
+}
+
 // Nothing here may allocate between Suspend and Resume: the target can be
 // holding the heap lock, and this thread would then deadlock against it.
 DWORD WINAPI sample_thread(void* arg) {
@@ -43,6 +78,7 @@ DWORD WINAPI sample_thread(void* arg) {
     constexpr size_t kStackDwords = 48;
     std::vector<uint32_t> stacks(kMaxSamples * kStackDwords);
     size_t n = 0;
+    std::vector<ThreadCpu> cpuBefore = thread_cpu();
     timeBeginPeriod(1);
     ULONGLONG end = GetTickCount64() + job.ms;
     while (GetTickCount64() < end && n < kMaxSamples) {
@@ -100,6 +136,24 @@ DWORD WINAPI sample_thread(void* arg) {
     for (size_t i = 0; i < list.size() && i < 12 && list[i].hits; ++i)
         BVR_LOG("[prof] %5.1f%% %s", 100.0 * list[i].hits / (n ? n : 1), list[i].name.c_str());
     BVR_LOG("[prof] %5.1f%% outside any module", 100.0 * unknown / (n ? n : 1));
+
+    // Every thread's CPU over the window: a contended lock has a holder.
+    std::vector<ThreadCpu> cpuAfter = thread_cpu();
+    std::vector<std::pair<uint64_t, ThreadCpu>> busy;
+    for (const ThreadCpu& t : cpuAfter)
+        for (const ThreadCpu& b : cpuBefore)
+            if (b.tid == t.tid) busy.push_back({t.cpu100ns - b.cpu100ns, t});
+    std::sort(busy.begin(), busy.end(),
+              [](const auto& a, const auto& b) { return a.first > b.first; });
+    for (size_t i = 0; i < busy.size() && i < 12; ++i) {
+        const Mod* m = nullptr;
+        for (const Mod& c : list)
+            if (busy[i].second.start >= c.base && busy[i].second.start < c.base + c.size) m = &c;
+        BVR_LOG("[prof] thread %u %5.1f%% of a core, starts in %s+%X%s", busy[i].second.tid,
+                busy[i].first / 100.0 / job.ms, m ? m->name.c_str() : "?",
+                static_cast<unsigned>(m ? busy[i].second.start - m->base : busy[i].second.start),
+                busy[i].second.tid == job.tid ? " (sampled)" : "");
+    }
 
     // System code by symbol, with the nearest caller inside the game or the mod.
     HANDLE proc = GetCurrentProcess();
