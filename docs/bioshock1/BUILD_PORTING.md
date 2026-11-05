@@ -26,6 +26,9 @@ console seam run, and it then called a Steam-only function RVA. After adding any
 trace what it unblocks. Console entries now come from vtables, verified by the RTTI
 locator's this-adjustment, or the command is refused.
 
+The name table is sparse: 188 of the first 256 slots were null on GOG. Identify it by
+every non-null entry carrying its own index, not by counting filled slots.
+
 ## Shape check
 
 A fire-start must end in the right `ret` size and read the documented pawn fields
