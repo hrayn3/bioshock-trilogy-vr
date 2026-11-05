@@ -39,7 +39,12 @@ A fire-start must end in the right `ret` size and read the documented pawn field
 Vtable slots `+0x304` and `+0x2FC` match the Steam layout. Weapon fire-start is at RVA
 `0x69730`, ability fire-start at `0xFDF0`, reached from ability vtable slot `+0xE8`.
 
-## Still off on unrecognised builds
+## Object scans
 
-`run_object_scan` refuses, so FOV control and the viewmodel drive stay off. Their callers
-write through Steam field offsets. Verify each offset read-only first.
+`run_object_scan` refuses only when RTTI did not find the class. On GOG every scan binds, and
+each accept callback checks its fields against live data: location near the camera, owner
+vtable, FOV range, class name through the `UClass` vtable.
+
+Verified live on GOG: the hands and weapon drive follows a simulated controller at 100 UU per
+metre, the 47-bone rig binds, the `CurrentHoldable` read names every carried weapon, and the
+wrench swing gate opens.

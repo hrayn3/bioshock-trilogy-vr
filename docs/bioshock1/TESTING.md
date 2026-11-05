@@ -99,13 +99,12 @@ decision path - same thresholds, same gates, same pulse - with an equal
 zero-speed gap between humps, which is what re-arms the detector and makes the
 cooldown observable.
 
-Two things flat cannot do, and the workarounds: (a) **live hand samples need an
-XR session**, so `sim` is the only driver; (b) **weapon switching cannot be
-driven flat** (the radial needs a human - session 30), so force the gate with
-`vraim wkey sim Wrench`, which sets the same per-weapon profile key the gate
-reads. With a pistol actually in hand the pulse then fires the pistol, and the
-ammo counter is the proof that the pulse reached the game. `vraim wkey real`
-restores live tracking - do not leave it forced.
+Without an XR session there are no live hand samples, so `sim` is the only
+driver. To reach the wrench, tap RB until it is equipped: `vrinput test press RB
+150`, about 3 s apart, steps through every carried weapon. `vraim wkey sim
+Wrench` also forces the gate, and with a pistol in hand the pulse then fires it,
+so the ammo counter proves the pulse reached the game. `vraim wkey real` restores
+live tracking - do not leave it forced.
 
 Verified flat procedure (2026-07-31, no headset, `vrpreset` applied):
 1. Boot to gameplay, `vrpreset`, `vrinput swing log on`. `vrinput swing status`
@@ -206,9 +205,7 @@ Firing the game from the harness - the gotchas that cost a session:
 3. **Driving a swing from the harness DOES work**, and it is worth knowing because
    this file used to imply melee could not be exercised flat at all:
    `vrinput test trig r 255 400` twice, ~2 s apart (the first pull only switches
-   hands). What CANNOT be driven is the weapon SWITCH - all four D-pad directions
-   were tried in session 30 and `vraim weapon` never left `active='Shotgun'`, so
-   a human has to equip the weapon under test first.
+   hands). The D-pad does not switch weapons (session 30); a short RB tap does.
 4. **`vraim scanimpl <rva> <args>`: `args` must equal the target's `ret imm / 4`.**
    Both `InitiateDamage` implementations are `ret 8`, so `args` is **2**. Passing
    the wrong count returns with a misaligned stack and pops a
