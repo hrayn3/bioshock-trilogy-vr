@@ -9,6 +9,8 @@
 
 #include <cstdint>
 
+struct ID3D11DeviceContext;
+
 struct IDXGISwapChain;
 
 namespace bvr::frame_inspector {
@@ -16,6 +18,8 @@ namespace bvr::frame_inspector {
 // Hook the immediate-context vtable slots (fail-soft per slot). `ctxVtable`
 // is the vtable pointer harvested from the throwaway device's context.
 bool install(void** ctxVtable);
+// The context pointer the game's draws arrive on, null before the first one.
+ID3D11DeviceContext* game_context();
 // Same detours, written into the context's own function table. For a context
 // under multithread protection.
 bool install_in_table(void** ctxVtable);

@@ -46,6 +46,7 @@ std::atomic<uint32_t> g_callCensus[13]{};
 // While nonzero, only this thread should be touching the context.
 std::atomic<DWORD> g_exclusiveTid{0};
 std::atomic<uint32_t> g_foreignCalls{0};
+std::atomic<ID3D11DeviceContext*> g_gameContext{nullptr}; // the pointer draws really arrive on
 
 // Names each distinct route into the context from the wrong thread, once.
 void note_foreign(int slot) {
@@ -603,6 +604,7 @@ Event& push_event(EventKind kind, const void* retAddr, void* espHint) {
 void STDMETHODCALLTYPE DrawIndexedDetour(ID3D11DeviceContext* ctx, UINT indexCount,
                                          UINT startIndex, INT baseVertex) {
     note_call(CxDrawIndexed);
+    g_gameContext.store(ctx, std::memory_order_relaxed);
     if (t_suppress == 0) bvr::hud::on_draw_indexed(ctx);
     // Session 34: adapter mesh veto. Checked BEFORE recording on purpose - a
     // dropped draw did not happen, and a dump that lists it would be describing
@@ -1088,6 +1090,8 @@ void write_dump() {
 } // namespace
 
 // ---- public api -----------------------------------------------------------
+
+ID3D11DeviceContext* game_context() { return g_gameContext.load(std::memory_order_relaxed); }
 
 void set_exclusive_thread(unsigned long tid) { g_exclusiveTid.store(tid, std::memory_order_relaxed); }
 

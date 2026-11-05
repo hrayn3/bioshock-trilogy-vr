@@ -32,8 +32,7 @@ std::atomic<bool> g_loggedFirstPresent{false};
 std::atomic<uint64_t> g_presentCount{0};
 std::atomic<bool> g_wantMtProtect{false};
 
-// Protection rewrites the context's own function table to thread-safe entry
-// points, so it goes on before the inspector hooks that table.
+// Protection rewrites the context's own function table to thread-safe entry points.
 bool apply_mt_protect(ID3D11DeviceContext* context) {
     ID3D10Multithread* mt = nullptr;
     if (FAILED(context->QueryInterface(IID_PPV_ARGS(&mt)))) return false;
@@ -94,14 +93,21 @@ HRESULT WINAPI PresentDetour(IDXGISwapChain* swapchain, UINT syncInterval, UINT 
             if (context) {
                 if (diag::skip("inspector"))
                     BVR_LOG("BVR_SKIP: frame inspector NOT installed");
-                else if (g_wantMtProtect.load(std::memory_order_relaxed) &&
-                         apply_mt_protect(context))
-                    frame_inspector::install_in_table(*reinterpret_cast<void***>(context));
                 else
                     frame_inspector::install(*reinterpret_cast<void***>(context));
                 context->Release();
             }
             device->Release();
+        }
+    }
+    // Protection comes once draws have shown which context the game really uses:
+    // it rewrites that context's table, away from the inline hooks.
+    if (g_wantMtProtect.load(std::memory_order_relaxed)) {
+        if (ID3D11DeviceContext* game = frame_inspector::game_context()) {
+            g_wantMtProtect.store(false, std::memory_order_relaxed);
+            if (apply_mt_protect(game)) frame_inspector::install_in_table(*reinterpret_cast<void***>(game));
+            BVR_LOG("d3d11: game context %p, its table %p", static_cast<void*>(game),
+                    *reinterpret_cast<void**>(game));
         }
     }
     // Command seam, for adapters with no engine hook to poll from (session 35).
