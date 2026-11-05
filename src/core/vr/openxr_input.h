@@ -23,6 +23,8 @@ void input_create(XrInstance instance);
 // children) and attach the action set (once per session - the attach flag
 // clears in input_on_session_teardown).
 void input_on_session_created(XrSession session, XrSpace baseSpace);
+// The left controller's grip space, or XR_NULL_HANDLE before the session has one.
+XrSpace left_grip_space();
 
 // From session teardown: destroy action spaces, clear the attach flag.
 void input_on_session_teardown();

@@ -902,4 +902,8 @@ void set_flourish_chord_suspended(bool on) {
 
 } // namespace bvr::input
 
+namespace bvr::vr {
+XrSpace left_grip_space() { return g_gripSpaceL; }
+} // namespace bvr::vr
+
 #endif // BVR_WITH_OPENXR

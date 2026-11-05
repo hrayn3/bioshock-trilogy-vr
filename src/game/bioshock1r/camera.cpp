@@ -690,7 +690,9 @@ void apply_command(const char* cmd, const char* args) {
     } else if (strcmp(cmd, "vrhud") == 0) {
         // Session 19 HUD capture: gameswf HUD redirected off the game frame
         // (clean eyes) and shown as a floating quad in stereo.
-        if (strncmp(args, "force on", 8) == 0) {
+        if (strncmp(args, "wrist", 5) == 0) {
+            bvr::vr::set_hud_on_wrist(strstr(args, "off") == nullptr);
+        } else if (strncmp(args, "force on", 8) == 0) {
             bvr::hud::set_force(true);
         } else if (strncmp(args, "force off", 9) == 0) {
             bvr::hud::set_force(false);
@@ -966,6 +968,7 @@ void apply_vr_preset() {
     // is what the corrected law predicts. `gfov <deg>` still arms it manually,
     // and the global default was already false - this line was the only thing
     // turning it on.
+    bvr::vr::set_hud_on_wrist(true);   // Hugh, 2026-11-06: at the edge of the view it blocks looking
     aim::handle_command("on");         // controller aim (R weapon / L plasmid)
     aim::handle_command("pose aim");   // the runtime AIM pose
     aim::handle_command("origin on");  // ray starts at the hand

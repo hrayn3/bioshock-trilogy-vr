@@ -152,6 +152,8 @@ int64_t g_swapFormat = 0; // the format create_swapchains picked (lazy HUD creat
 std::atomic<float> g_hudDistM{1.30f};
 std::atomic<float> g_hudWidthM{1.25f};
 std::atomic<float> g_hudUpM{-0.10f};
+std::atomic<bool> g_hudOnWrist{false}; // off: the head-locked quad every game has today
+constexpr float kHudWristWidthM = 0.20f;
 std::atomic<uint32_t> g_hudFramesSubmitted{0};
 std::atomic<bool> g_loggedFirstHudQuad{false};
 // s52: the HUD quad's texture provider (Infinite's GFx lane). Null = BS1's
@@ -4018,6 +4020,18 @@ void on_present_end(IDXGISwapChain* swapchain) {
                     hudQuad.pose.position = {0.0f, g_hudUpM.load(std::memory_order_relaxed),
                                              -g_hudDistM.load(std::memory_order_relaxed)};
                     float w = g_hudWidthM.load(std::memory_order_relaxed);
+                    XrSpace wrist = g_hudOnWrist.load(std::memory_order_relaxed)
+                                        ? left_grip_space()
+                                        : XR_NULL_HANDLE;
+                    if (wrist != XR_NULL_HANDLE) {
+                        // Like a watch on the left forearm: face up, 12 cm back
+                        // from the grip, its top edge away from you when the arm
+                        // is held across the chest.
+                        hudQuad.space = wrist;
+                        hudQuad.pose.orientation = {-0.5f, 0.5f, 0.5f, 0.5f};
+                        hudQuad.pose.position = {0.0f, 0.04f, 0.12f};
+                        w = kHudWristWidthM;
+                    }
                     hudQuad.size = {w, w * static_cast<float>(hd.Height) /
                                            static_cast<float>(hd.Width)};
                     layers[layerCount++] =
@@ -5089,6 +5103,11 @@ const char* session_state_name() {
 
 bool ever_focused() { return g_everFocused.load(std::memory_order_relaxed); }
 
+void set_hud_on_wrist(bool on) {
+    g_hudOnWrist.store(on, std::memory_order_relaxed);
+    BVR_LOG("xr: HUD %s", on ? "on the left wrist" : "head-locked");
+}
+
 void set_hud_quad(float distM, float widthM, float upM) {
     g_hudDistM.store(distM, std::memory_order_relaxed);
     g_hudWidthM.store(widthM, std::memory_order_relaxed);
@@ -5224,6 +5243,7 @@ int current_eye_sign() { return 0; }
 void sr_push_eye(int) {}
 void set_laser(const LaserConfig&) {}
 void set_aim_dot(const AimDotConfig&) {}
+void set_hud_on_wrist(bool) {}
 void set_hud_quad(float, float, float) {}
 void get_hud_quad(float* d, float* w, float* u) {
     if (d) *d = 0;

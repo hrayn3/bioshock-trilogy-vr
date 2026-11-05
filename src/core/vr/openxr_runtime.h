@@ -486,6 +486,8 @@ void set_aim_dot_slot(int slot, const AimDotConfig& cfg);
 // Session 19 HUD floating quad placement (meters; head-locked). Persisted by
 // the VR preset; sliders in the VR overlay section.
 void set_hud_quad(float distM, float widthM, float upM);
+// Moves the HUD quad from the head to the left wrist. Off by default.
+void set_hud_on_wrist(bool on);
 void get_hud_quad(float* distM, float* widthM, float* upM);
 
 // s52 (Infinite I9): the HUD quad's texture source, as a provider seam. When
