@@ -18,7 +18,7 @@
 namespace bvr::debug {
 namespace {
 
-constexpr size_t kMaxSamples = 60000;
+constexpr size_t kMaxSamples = 20000;
 std::atomic<bool> g_running{false};
 
 struct Job {
@@ -75,8 +75,8 @@ DWORD WINAPI sample_thread(void* arg) {
     std::vector<uint32_t> eips(kMaxSamples);
     // A wait and a busy loop both land in ntdll; the top of the stack tells them
     // apart by naming who called in.
-    constexpr size_t kStackDwords = 48;
-    std::vector<uint32_t> stacks(kMaxSamples * kStackDwords);
+    constexpr size_t kStackDwords = 512;
+    std::vector<uint32_t> stacks(kMaxSamples * kStackDwords, 0);
     size_t n = 0;
     std::vector<ThreadCpu> cpuBefore = thread_cpu();
     timeBeginPeriod(1);
@@ -185,6 +185,7 @@ DWORD WINAPI sample_thread(void* arg) {
         std::string caller = "-";
         int depth = 0;
         for (size_t k = 0; k < kStackDwords && depth < 3; ++k) {
+            if (depth == 2 && k > 48) break;
             uintptr_t v = stacks[i * kStackDwords + k];
             const Mod* c = mod_of(v);
             if (!c || (c->base != exeBase && c->base != selfBase)) continue;
@@ -198,6 +199,38 @@ DWORD WINAPI sample_thread(void* arg) {
         ++sys[m->name + "!" + name + " < " + caller];
     }
     SymCleanup(proc);
+
+    // Inclusive time: the share of samples with each game return address on the
+    // stack, so tick, shadows, HUD and scene can be told apart in a flat profile.
+    // A stack dword counts only if the bytes before it are a call.
+    std::map<uint32_t, size_t> incl;
+    const Mod* exeMod = mod_of(exeBase);
+    auto is_return_address = [&](uintptr_t a) {
+        if (a < exeBase + 0x1000 || a >= exeBase + 0xB00000) return false;
+        const uint8_t* p = reinterpret_cast<const uint8_t*>(a);
+        return p[-5] == 0xE8 || (p[-6] == 0xFF && p[-5] == 0x15) ||
+               (p[-2] == 0xFF && (p[-1] & 0xF8) == 0xD0) ||
+               (p[-3] == 0xFF && (p[-2] & 0xF8) == 0x50) ||
+               (p[-6] == 0xFF && (p[-5] & 0xF8) == 0x90) ||
+               (p[-2] == 0xFF && (p[-1] & 0xF8) == 0x10);
+    };
+    std::vector<uint32_t> seen;
+    for (size_t i = 0; exeMod && i < n; ++i) {
+        seen.clear();
+        for (size_t k = 0; k < kStackDwords; ++k) {
+            uintptr_t v = stacks[i * kStackDwords + k];
+            if (!is_return_address(v)) continue;
+            uint32_t rva = static_cast<uint32_t>(v - exeBase);
+            if (std::find(seen.begin(), seen.end(), rva) == seen.end()) seen.push_back(rva);
+        }
+        for (uint32_t rva : seen) ++incl[rva];
+    }
+    std::vector<std::pair<size_t, uint32_t>> inclTop;
+    for (auto& kv : incl) inclTop.push_back({kv.second, kv.first});
+    std::sort(inclTop.rbegin(), inclTop.rend());
+    for (size_t i = 0; i < inclTop.size() && i < 90; ++i)
+        BVR_LOG("[prof] incl %08X %5.1f%%", inclTop[i].second,
+                100.0 * inclTop[i].first / (n ? n : 1));
     std::vector<std::pair<size_t, std::string>> sysTop;
     for (auto& kv : sys) sysTop.push_back({kv.second, kv.first});
     std::sort(sysTop.rbegin(), sysTop.rend());
