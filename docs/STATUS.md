@@ -7538,6 +7538,19 @@ and it resumes.
 - itsloopyo's headtracking mod also installs as `xinput1_3.dll` - mutually exclusive with ours
   (install.ps1 backs theirs up automatically).
 
+### GOG fork session, 2026-11-05: melee hold, physics hand, Meta routing
+
+On branch `gog-build-support` of the fork. Simulator and SteamVR fake-headset evidence only, no
+real headset yet.
+
+- `vrbones meleehold`: the wrench animation still plays and deals damage, the hand stays put.
+- Physics hand (`physhand.cpp`, `vrphys`, design in `docs/bioshock1/PHYSICS_HANDS.md`): on by
+  default on the GOG build, inert elsewhere.
+- Meta's 32-bit runtime is routed to the SteamVR shim automatically unless `mode=native`.
+- `vrprof`: game-thread sampler. Per-frame VirtualQuery calls removed, 55 to 58 stereo frames/s.
+- Open lead: about 7% of the game thread blocks inside `free` (exe+495A9F, called from 0x503B41),
+  with or without the simulator.
+
 ## Session log (newest first)
 
 ### Session 62f (same day) - **v0.8.2 RELEASED**: BS1 load-save crash root-caused and fixed
