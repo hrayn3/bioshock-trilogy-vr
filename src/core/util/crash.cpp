@@ -311,8 +311,13 @@ DWORD WINAPI TeardownWatchdog(LPVOID) {
     return 0;
 }
 
+void (*g_teardownCallback)() = nullptr;
+
+void set_teardown_callback(void (*fn)()) { g_teardownCallback = fn; }
+
 void note_teardown(const char* why) {
     if (InterlockedExchange(&g_teardown, 1) != 0) return;
+    if (g_teardownCallback) g_teardownCallback();
     BVR_LOG("crash: window teardown noted (%s) - exit-path faults will be "
             "logged without dumps and end the process directly",
             why);

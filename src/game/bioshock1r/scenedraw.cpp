@@ -14,6 +14,7 @@
 #include "core/gfx/frame_inspector.h"
 #include "core/gfx/hud_capture.h"
 #include "core/hooks/d3d11_hook.h"
+#include "core/util/crash.h"
 #include "core/util/log.h"
 #include "core/vr/openxr_runtime.h"
 #include "game/bioshock1r/camera.h"
@@ -1136,6 +1137,12 @@ bool offload_set(bool on) {
         if (!t) return false;
         CloseHandle(t);
         bvr::d3d11_hook::request_multithread_protect();
+        // A drain still running as the window closes faults, and the game then
+        // shows its "failed to shutdown" box on the next launch.
+        bvr::crash::set_teardown_callback([] {
+            g_offload.store(false, std::memory_order_relaxed);
+            offload_join();
+        });
     }
     offload_join();
     g_offload.store(on, std::memory_order_relaxed);

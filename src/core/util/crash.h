@@ -28,4 +28,8 @@ void note_teardown(const char* why);
 // park their own machinery (doubled draw, engine-field writes) per frame.
 bool teardown_seen();
 
+// Called once on the closing thread when teardown is noted, before the host
+// carries on closing. For an adapter with work on another thread to finish.
+void set_teardown_callback(void (*fn)());
+
 } // namespace bvr::crash
