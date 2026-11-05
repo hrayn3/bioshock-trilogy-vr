@@ -176,7 +176,7 @@ const uint8_t* find_ability_fire_start(const bvr::pattern_scan::ProcessImage& im
 // each carry their own index at +0.
 bool bind_gnames() {
     using bvr::pattern_scan::is_memory_valid;
-    constexpr int32_t kMinNames = 1000, kMaxNames = 2000000, kProbe = 32;
+    constexpr int32_t kMinNames = 1000, kMaxNames = 2000000, kProbe = 256, kNeed = 200;
     const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(g_imageBase);
     const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(g_imageBase + dos->e_lfanew);
     const IMAGE_SECTION_HEADER* section = IMAGE_FIRST_SECTION(nt);
@@ -192,7 +192,7 @@ bool bind_gnames() {
             int32_t max = *reinterpret_cast<const int32_t*>(p + 8);
             if (count < kMinNames || count > kMaxNames || max < count || !data) continue;
             if (!is_memory_valid(data, kProbe * sizeof(void*))) continue;
-            // Recycled slots are legitimately null, so demand most, not all.
+            // Recycled slots are legitimately null or reused, so demand most, not all.
             int32_t selfIndexed = 0;
             for (int32_t n = 0; n < kProbe; ++n) {
                 const uint8_t* entry = data[n];
@@ -200,7 +200,7 @@ bool bind_gnames() {
                     *reinterpret_cast<const int32_t*>(entry) == n)
                     ++selfIndexed;
             }
-            if (selfIndexed < kProbe - 4) continue;
+            if (selfIndexed < kNeed) continue;
             if (found) { // two tables would mean this shape test is wrong
                 BVR_LOG("[b1r] name table ambiguous - class names stay off");
                 return false;
