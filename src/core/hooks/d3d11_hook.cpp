@@ -27,6 +27,36 @@ PresentFn g_origPresent = nullptr;
 ResizeBuffersFn g_origResizeBuffers = nullptr;
 std::atomic<bool> g_loggedFirstPresent{false};
 std::atomic<uint64_t> g_presentCount{0};
+std::atomic<uint32_t> g_lastPresentTid{0};
+
+void LogSwapchainInfo(IDXGISwapChain* swapchain) {
+    DXGI_SWAP_CHAIN_DESC desc{};
+    swapchain->GetDesc(&desc);
+    BVR_LOG("first Present: backbuffer %ux%u format %u, windowed=%d, hwnd=%p",
+            desc.BufferDesc.Width, desc.BufferDesc.Height,
+            desc.BufferDesc.Format, desc.Windowed, desc.OutputWindow);
+
+    ID3D11Device* device = nullptr;
+    if (SUCCEEDED(swapchain->GetDevice(IID_PPV_ARGS(&device)))) {
+        BVR_LOG("device feature level: 0x%X", device->GetFeatureLevel());
+
+        IDXGIDevice* dxgiDevice = nullptr;
+        if (SUCCEEDED(device->QueryInterface(IID_PPV_ARGS(&dxgiDevice)))) {
+            IDXGIAdapter* adapter = nullptr;
+            if (SUCCEEDED(dxgiDevice->GetAdapter(&adapter))) {
+                DXGI_ADAPTER_DESC adapterDesc{};
+                adapter->GetDesc(&adapterDesc);
+                BVR_LOG("adapter: %ls (%zu MB dedicated)",
+                        adapterDesc.Description,
+                        adapterDesc.DedicatedVideoMemory / (1024 * 1024));
+                adapter->Release();
+            }
+            dxgiDevice->Release();
+        }
+        device->Release();
+    }
+}
+
 HRESULT WINAPI PresentDetour(IDXGISwapChain* swapchain, UINT syncInterval, UINT flags) {
     const uint64_t presents = g_presentCount.fetch_add(1, std::memory_order_relaxed);
     g_lastPresentTid.store(GetCurrentThreadId(), std::memory_order_relaxed);
