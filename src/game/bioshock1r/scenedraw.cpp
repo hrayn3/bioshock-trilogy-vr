@@ -1491,6 +1491,10 @@ void apply_stereo_only(bool on) {
 void init(const bvr::pattern_scan::ProcessImage& image) {
     g_imageBase = image.base;
     g_imageSize = image.size;
+    // Protection swaps the context's vtable, so asking later leaves the frame
+    // inspector's draw hooks on a table nothing calls any more. On the first
+    // Present it lands before they install.
+    if (patterns::kSceneBuildGameplayOuterRetRva) bvr::d3d11_hook::request_multithread_protect();
 }
 
 void handle_command(const char* args) {

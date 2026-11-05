@@ -3594,7 +3594,9 @@ void on_present_end(IDXGISwapChain* swapchain) {
     bool srFrame = projectionMode && srSign != 0;
     // HUD capture gate (session 19): the gameswf redirect runs only while
     // stereo gameplay frames flow (menus stop the eye tags -> gate drops).
-    bvr::hud::set_gate(srFrame);
+    // The wrist HUD needs the capture in alternate-eye too; other games keep the SR gate.
+    bvr::hud::set_gate(srFrame || (projectionMode && g_aerEnabled.load(std::memory_order_relaxed) &&
+                                   g_hudOnWrist.load(std::memory_order_relaxed)));
 
     // Mirror, left half: snapshot the LEFT eye before anything else runs
     // (read-only - the XR eye capture below is unaffected). The right half

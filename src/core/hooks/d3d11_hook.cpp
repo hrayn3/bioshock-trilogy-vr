@@ -40,8 +40,10 @@ void apply_mt_protect(IDXGISwapChain* swapchain) {
     if (context &&
         SUCCEEDED(context->QueryInterface(__uuidof(ID3D10Multithread),
                                           reinterpret_cast<void**>(&mt)))) {
+        void* before = *reinterpret_cast<void**>(context);
         BOOL was = mt->SetMultithreadProtected(TRUE);
-        BVR_LOG("d3d11: multithread protection on (was %d)", was ? 1 : 0);
+        BVR_LOG("d3d11: multithread protection on (was %d), context vtable %p -> %p",
+                was ? 1 : 0, before, *reinterpret_cast<void**>(context));
         mt->Release();
     }
     if (context) context->Release();
