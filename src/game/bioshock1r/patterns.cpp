@@ -612,8 +612,22 @@ void resolve_aim_natives(const bvr::pattern_scan::ProcessImage& image, Symbols& 
 }
 
 bool engine_ptr_ready() {
-    if (g_enginePtrBound) return true;
     if (!g_imageBase) return false;
+    if (g_rvaTrusted) return true;
+    if (g_enginePtrBound) {
+        // A slot can pass at the menu and die at the first level load, so an
+        // unrecognised build proves it again on every use.
+        ReadableCache cache;
+        const void* const* slot =
+            reinterpret_cast<const void* const*>(g_imageBase + kGameEnginePtrRva);
+        const void* object = *slot;
+        if (object && cache.readable(object) &&
+            *reinterpret_cast<const void* const*>(object) == g_imageBase + kEngineVtableRva)
+            return true;
+        BVR_LOG("[b1r] engine global at RVA 0x%X went stale - searching again",
+                kGameEnginePtrRva);
+        g_enginePtrBound = false;
+    }
     static DWORD nextTry = 0;
     DWORD now = GetTickCount();
     if (static_cast<int32_t>(now - nextTry) < 0) return false;
