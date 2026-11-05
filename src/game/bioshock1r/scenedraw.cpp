@@ -174,6 +174,7 @@ std::atomic<bool> g_offBusy{false};
 std::atomic<uint32_t> g_offloads{0};
 std::atomic<uint32_t> g_offJoinUsSum{0}; // since the last heartbeat
 std::atomic<uint32_t> g_offWorkUsSum{0};
+std::atomic<uint32_t> g_offSentPumped{0};
 void offload_join();
 std::atomic<uint32_t> g_lastSecondDraws{0};
 std::atomic<uint32_t> g_callerRvas[4]{};
@@ -517,11 +518,12 @@ void heartbeat(uint32_t beatTid) {
     uint32_t calcOut = g_calcOutside.load(std::memory_order_relaxed);
     uint32_t forced = g_forcedInline.load(std::memory_order_relaxed);
     uint64_t presents = bvr::d3d11_hook::present_count();
-    BVR_LOG("[reentry] drain busy %u ms/s, offload worker %u ms/s, join wait %u ms/s (%u offloads)",
+    BVR_LOG("[reentry] drain busy %u ms/s, offload worker %u ms/s, join wait %u ms/s (%u offloads, %u sent)",
             g_drainUsSum.exchange(0, std::memory_order_relaxed) / 1000,
             g_offWorkUsSum.exchange(0, std::memory_order_relaxed) / 1000,
             g_offJoinUsSum.exchange(0, std::memory_order_relaxed) / 1000,
-            g_offloads.load(std::memory_order_relaxed));
+            g_offloads.load(std::memory_order_relaxed),
+            g_offSentPumped.load(std::memory_order_relaxed));
     BVR_LOG("[reentry] mode=%s drain=%u/s flush=%u/s forced=%u/s build=%u/s "
             "submit=%u/s (nested=%u) 2nd=%u/s presents=%u/s "
             "calcview in=%u out=%u/s call1=%uus call2=%uus beatTid=%u "
@@ -1075,12 +1077,56 @@ DWORD WINAPI offload_thread(void*) {
     }
 }
 
+// A stall report: where the worker is, as return addresses in the game and mod.
+void offload_log_stuck() {
+    HANDLE t = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE, g_offTid);
+    if (!t) return;
+    if (SuspendThread(t) != static_cast<DWORD>(-1)) {
+        CONTEXT c{};
+        c.ContextFlags = CONTEXT_CONTROL;
+        uint32_t stack[256] = {};
+        SIZE_T got = 0;
+        if (GetThreadContext(t, &c))
+            ReadProcessMemory(GetCurrentProcess(), reinterpret_cast<void*>(c.Esp), stack,
+                              sizeof stack, &got);
+        ResumeThread(t);
+        char line[400];
+        int pos = _snprintf_s(line, sizeof line, _TRUNCATE, "eip %X:", c.Eip);
+        HMODULE self = nullptr;
+        GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                               GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           reinterpret_cast<LPCWSTR>(&offload_log_stuck), &self);
+        for (int i = 0, n = 0; i < 256 && n < 24 && pos > 0 && pos < 360; ++i) {
+            uint32_t rva = to_rva(reinterpret_cast<const void*>(stack[i]));
+            if (rva == 0xFFFFFFFFu || rva >= 0xB00000) continue;
+            pos += _snprintf_s(line + pos, sizeof line - pos, _TRUNCATE, " %X", rva);
+            ++n;
+        }
+        BVR_LOG("[reentry] offload worker stuck 2 s, %s", line);
+    }
+    CloseHandle(t);
+}
+
 void offload_join() {
     if (!g_offBusy.load(std::memory_order_acquire) || GetCurrentThreadId() == g_offTid) return;
     LARGE_INTEGER t0, t1;
     QueryPerformanceCounter(&t0);
-    while (WaitForSingleObject(g_offDone, 2000) == WAIT_TIMEOUT)
-        BVR_LOG("[reentry] offload join waited 2 s - worker stuck in the drain");
+    // Keep serving messages sent to this thread: Present on the worker can send
+    // to the window's thread and wait, and that thread is us. Sent messages only,
+    // because posted ones belong to the engine's own pump.
+    uint32_t stuckMs = 0;
+    for (;;) {
+        DWORD r = MsgWaitForMultipleObjects(1, &g_offDone, FALSE, 250, QS_SENDMESSAGE);
+        if (r == WAIT_OBJECT_0) break;
+        if (r == WAIT_OBJECT_0 + 1) {
+            MSG m;
+            PeekMessageW(&m, nullptr, 0, 0, PM_NOREMOVE | PM_QS_SENDMESSAGE);
+            g_offSentPumped.fetch_add(1, std::memory_order_relaxed);
+            continue;
+        }
+        stuckMs += 250;
+        if (stuckMs == 2000) offload_log_stuck();
+    }
     QueryPerformanceCounter(&t1);
     g_offJoinUsSum.fetch_add(qpc_us(t0, t1), std::memory_order_relaxed);
 }
