@@ -423,6 +423,16 @@ bool run_object_scan(ObjectScan& scan, uint32_t vtableRva, uint32_t needBytes,
     return true;
 }
 
+namespace {
+bool vtable_matches(const void* obj, const void* want) {
+    __try {
+        return *static_cast<const void* const*>(obj) == want;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+} // namespace
+
 int32_t* hfov_option_ptr() {
     using namespace bvr::pattern_scan;
     if (!g_imageBase) return nullptr;
@@ -432,7 +442,15 @@ int32_t* hfov_option_ptr() {
     // Revalidate the cache on TWO predicates, not one: the vtable dword AND the
     // UObject class chain, so a freed-and-not-yet-reused block cannot keep
     // passing as the settings object while the FOV writer pokes it every frame.
+    // The class chain is several VirtualQuery calls and this runs per CalcView,
+    // so between full proofs the vtable alone is checked, under a fault guard.
+    static uint64_t lastProofMs = 0;
     if (g_userSettings) {
+        uint64_t proofNow = GetTickCount64();
+        if (proofNow - lastProofMs < 1000 && vtable_matches(g_userSettings, wantVtable))
+            return reinterpret_cast<int32_t*>(static_cast<uint8_t*>(g_userSettings) +
+                                              kUserSettingsHfovOffset);
+        lastProofMs = proofNow;
         if (is_memory_valid(g_userSettings, kUserSettingsHfovOffset + sizeof(int32_t)) &&
             *reinterpret_cast<const void* const*>(g_userSettings) == wantVtable &&
             object_class_name(g_userSettings) != nullptr) {

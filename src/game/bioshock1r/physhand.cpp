@@ -61,6 +61,7 @@ const uint8_t* g_base = nullptr;
 std::atomic<bool> g_enabled{false};
 std::atomic<bool> g_forceOff{false};
 bool g_nearPending = false;
+bool g_nearLooseOnly = false;
 
 void* g_havok = nullptr; // the level's Havok wrapper, re-read each frame
 void* g_world = nullptr;
@@ -244,11 +245,13 @@ int walk_island(void* island, const float hand[3]) {
                 if (!read_pos(b, p)) continue;
                 float d[3] = {p[0] - hand[0], p[1] - hand[1], p[2] - hand[2]};
                 float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-                if (dist > kNearHk) continue;
                 uint32_t filter = *reinterpret_cast<const uint32_t*>(
                     static_cast<uint8_t*>(b) + kBodyFilterOffset);
                 uint8_t motion =
                     *(static_cast<uint8_t*>(b) + kBodyMotionTypeOffset);
+                // Loose props anywhere on the map, everything else only nearby.
+                bool loose = motion != 4 && motion != 5;
+                if (g_nearLooseOnly ? !loose : dist > kNearHk) continue;
                 g_tracked[g_trackedCount].body = b;
                 memcpy(g_tracked[g_trackedCount].pos, p, 12);
                 BVR_LOG("[phys] near #%d body %p layer=%u group=%u motion=%u at %.2f m "
@@ -281,7 +284,8 @@ void near_scan(const float handHk[3]) {
     g_trackedCount = 0;
     int active = walk_islands(kWorldActiveIslandsOffset, handHk);
     int asleep = walk_islands(kWorldInactiveIslandsOffset, handHk);
-    BVR_LOG("[phys] near: %d awake, %d asleep within %.0f m", active, asleep, kNearHk * 0.5f);
+    BVR_LOG("[phys] near: %d awake, %d asleep%s", active, asleep,
+            g_nearLooseOnly ? " (loose props, whole map)" : " within 8 m");
 }
 
 void track_tick() {
@@ -479,6 +483,7 @@ void handle_command(const char* args) {
         BVR_LOG("[phys] off");
     } else if (strncmp(args, "near", 4) == 0) {
         g_nearPending = true;
+        g_nearLooseOnly = strstr(args, "loose") != nullptr;
     } else if (strncmp(args, "sweep", 5) == 0) {
         int index = 0;
         sscanf_s(args + 5, "%d", &index);
