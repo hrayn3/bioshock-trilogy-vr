@@ -64,6 +64,8 @@ bool peek_head_pose(HeadPose& out);
 // `aimPose` true = the runtime's pointing ray (aiming), false = the grip pose
 // (hand/weapon placement).
 bool get_hand_pose(int hand, bool aimPose, HeadPose& out);
+// Eases hand tremor in the poses above. Off by default.
+void set_hand_smoothing(bool on);
 
 // --- Session 20: vrrec record+replay support ---------------------------------
 // Sim overlay on the hand-pose funnel: while armed, every consumer of

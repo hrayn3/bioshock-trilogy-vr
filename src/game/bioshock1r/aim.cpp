@@ -282,11 +282,17 @@ bool surface_hit(const FVector& start, const FVector& end, FVector* at) {
         !read_ptr(static_cast<uint8_t*>(pawn) + patterns::kActorLevelOffset, &level) || !level)
         return false;
     bool hit = line_check_raw(level, pawn, start, end, at);
-    static int s_logs = 0;
-    if (hit && s_logs < 6) {
-        ++s_logs;
+    static uint32_t s_tries = 0, s_hits = 0;
+    static uint64_t s_lastLog = 0;
+    ++s_tries;
+    if (hit) ++s_hits;
+    uint64_t now = GetTickCount64();
+    if (now - s_lastLog >= 2000) {
+        s_lastLog = now;
         float dx = at->x - start.x, dy = at->y - start.y, dz = at->z - start.z;
-        BVR_LOG("[aim] plasmid dot on a surface %.0f UU away", sqrtf(dx * dx + dy * dy + dz * dz));
+        BVR_LOG("[aim] plasmid dot: %u of %u rays hit, last %.0f UU", s_hits, s_tries,
+                hit ? sqrtf(dx * dx + dy * dy + dz * dz) : -1.0f);
+        s_tries = s_hits = 0;
     }
     return hit;
 }

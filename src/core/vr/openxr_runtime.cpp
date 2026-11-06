@@ -4484,9 +4484,62 @@ bool peek_head_pose(HeadPose& out) {
     return true;
 }
 
+namespace {
+// Hand tremor is a millimetre or two and a fraction of a degree; a real move
+// is more. So small differences are eased and big ones pass through, which
+// costs no lag on a swing. One new sample steps it once, however many readers.
+std::atomic<bool> g_handSmoothing{false};
+struct HandFilter {
+    bool primed = false;
+    float raw[7] = {};
+    float out[7] = {};
+};
+HandFilter g_handFilter[2][2];
+std::mutex g_handFilterMutex;
+
+void smooth_hand(HandFilter& f, const float p[3], const float q[4], HeadPose& out) {
+    constexpr float kFloor = 0.15f;      // weight of a new sample at rest
+    constexpr float kFullMoveM = 0.012f; // a frame's move that passes straight through
+    constexpr float kFullTurnRad = 0.026f;
+    constexpr float kJumpM = 0.5f;
+    const float raw[7] = {p[0], p[1], p[2], q[0], q[1], q[2], q[3]};
+    if (memcmp(raw, f.raw, sizeof raw) != 0) {
+        memcpy(f.raw, raw, sizeof raw);
+        float dx = p[0] - f.out[0], dy = p[1] - f.out[1], dz = p[2] - f.out[2];
+        float dist = sqrtf(dx * dx + dy * dy + dz * dz);
+        if (!f.primed || dist > kJumpM) {
+            memcpy(f.out, raw, sizeof raw);
+            f.primed = true;
+        } else {
+            float a = fminf(1.0f, kFloor + dist / kFullMoveM);
+            for (int i = 0; i < 3; ++i) f.out[i] += (p[i] - f.out[i]) * a;
+            float dot = q[0] * f.out[3] + q[1] * f.out[4] + q[2] * f.out[5] + q[3] * f.out[6];
+            float sign = dot < 0.0f ? -1.0f : 1.0f;
+            float turn = 2.0f * acosf(fminf(1.0f, fabsf(dot)));
+            float b = fminf(1.0f, kFloor + turn / kFullTurnRad);
+            float len = 0.0f;
+            for (int i = 0; i < 4; ++i) {
+                f.out[3 + i] += (q[i] * sign - f.out[3 + i]) * b;
+                len += f.out[3 + i] * f.out[3 + i];
+            }
+            len = sqrtf(len);
+            for (int i = 0; i < 4; ++i) f.out[3 + i] /= len;
+        }
+    }
+    out = {f.out[0], f.out[1], f.out[2], f.out[3], f.out[4], f.out[5], f.out[6]};
+}
+} // namespace
+
+void set_hand_smoothing(bool on) { g_handSmoothing.store(on, std::memory_order_relaxed); }
+
 bool get_hand_pose(int hand, bool aimPose, HeadPose& out) {
     float p[3], q[4];
     if (!input_get_hand_pose(hand, aimPose, p, q)) return false;
+    if (g_handSmoothing.load(std::memory_order_relaxed) && hand >= 0 && hand < 2) {
+        std::lock_guard<std::mutex> lock(g_handFilterMutex);
+        smooth_hand(g_handFilter[hand][aimPose ? 1 : 0], p, q, out);
+        return true;
+    }
     out = {p[0], p[1], p[2], q[0], q[1], q[2], q[3]};
     return true;
 }
@@ -5222,6 +5275,7 @@ void draw_debug_ui() {}
 bool get_head_pose(HeadPose&) { return false; }
 bool peek_head_pose(HeadPose&) { return false; }
 bool get_hand_pose(int, bool, HeadPose&) { return false; }
+void set_hand_smoothing(bool) {}
 void set_sim_hand_pose(int, bool, bool, const float[3], const float[4]) {}
 void clear_sim_hand_poses() {}
 bool session_live() { return false; }
