@@ -382,30 +382,40 @@ void* body_actor(void* body) {
     return nullptr;
 }
 
-bool grabbable(void* body) {
-    if (!vtable_is(body, kBodyVtableRva) || body == g_body) return false;
+enum TkReject { kTkOk, kTkSelf, kTkFixed, kTkNoWorld, kTkNoActor, kTkPlayer, kTkRagdoll, kTkHeavy, kTkCount };
+uint32_t g_tkRejects[kTkCount] = {};
+
+TkReject grab_verdict(void* body) {
+    if (!vtable_is(body, kBodyVtableRva) || body == g_body) return kTkSelf;
     uint8_t* b = static_cast<uint8_t*>(body);
     __try {
         uint8_t motion = *(b + kBodyMotionTypeOffset);
-        if (motion == 4 || motion == 5) return false;
-        if (!*reinterpret_cast<void**>(b + patterns::kHkBodyWorldOffset)) return false;
+        if (motion == 4 || motion == 5) return kTkFixed;
+        if (!*reinterpret_cast<void**>(b + patterns::kHkBodyWorldOffset)) return kTkNoWorld;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
+        return kTkNoWorld;
     }
     void* actor = body_actor(body);
-    if (!actor || actor == g_pawn) return false;
+    if (!actor) return kTkNoActor;
+    if (actor == g_pawn) return kTkPlayer;
     void* rag = nullptr;
     void* live = nullptr;
     if (read_ptr(static_cast<uint8_t*>(actor) + patterns::kActorRagdollOffset, &rag) &&
         read_ptr(static_cast<uint8_t*>(rag) + 0x40, &live))
-        return false; // ragdoll bones
+        return kTkRagdoll;
     __try {
         float kg = fn<MassFn>(patterns::kHkGetMassRva)(b + patterns::kHkBodyMotionOffset, nullptr);
-        if (kg > kTkMaxKg) return false;
+        if (kg > kTkMaxKg) return kTkHeavy;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
-        return false;
+        return kTkHeavy;
     }
-    return true;
+    return kTkOk;
+}
+
+bool grabbable(void* body) {
+    TkReject v = grab_verdict(body);
+    ++g_tkRejects[v];
+    return v == kTkOk;
 }
 
 void tk_scan_island(void* island, const float hand[3], void** best, float* bestDist) {
@@ -527,7 +537,13 @@ void telekinesis_tick(const float handUu[3], const float dir[3], bool grip) {
         if (grip && !g_tkGripWas) {
             g_tkBody = tk_find(hand);
             if (g_tkBody) ++g_tkGrabs;
-            BVR_LOG("[tk] grip: %s", g_tkBody ? "got one" : "nothing in reach");
+            BVR_LOG("[tk] grip: %s (ok %u self %u fixed %u noworld %u noactor %u player %u ragdoll "
+                    "%u heavy %u)",
+                    g_tkBody ? "got one" : "nothing in reach", g_tkRejects[kTkOk],
+                    g_tkRejects[kTkSelf], g_tkRejects[kTkFixed], g_tkRejects[kTkNoWorld],
+                    g_tkRejects[kTkNoActor], g_tkRejects[kTkPlayer], g_tkRejects[kTkRagdoll],
+                    g_tkRejects[kTkHeavy]);
+            memset(g_tkRejects, 0, sizeof g_tkRejects);
         }
     } else if (!vtable_is(g_tkBody, kBodyVtableRva)) {
         g_tkBody = nullptr;
