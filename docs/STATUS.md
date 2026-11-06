@@ -11859,3 +11859,13 @@ DLL (BS2 flat+headset across rounds 1-4, BS1 sim smoke + headset pass),
 `bioshock-2` was merged to `main` - main now carries the full duology mod at
 v0.7.0. The exhaustive BS1 regression checklist remains available for the
 end-of-development pass, but the release-blocking question is answered.
+
+### 2026-11-06: headset pass on GOG BS1
+
+Render size 2400 per eye (65 fps at 2800 in the sim, GPU 52% at 2400). Headset: stereo pair at 36 on
+Air Link, black edges on fast turns; alternate-eye 72 and preferred, so it is the default. The
+second-eye worker is opt-in because D3D protection silences the frame inspector (THREADED_STEREO.md).
+HUD now pins to the left wrist: captured in the simulator, not yet seen in the headset.
+Next: headset check of the wrist HUD, custom HUD with hints in view, plasmid-only reticle on surfaces
+(`ULevel::SingleLineCheck` at RVA 0x32B9E0, vcall +0x168, static read only), reload flick,
+minor telekinesis, wrench swing following the hand.

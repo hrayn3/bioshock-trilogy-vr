@@ -54,3 +54,20 @@ On by default on the GOG build with `vrstereo on`. `reentry offload off` restore
 - The join serves sent messages because Present on the worker may send to the window thread.
 
 Not proven: a real headset, a long session, busy combat scenes.
+
+## Update, 2026-11-06: opt-in, not default
+
+The worker no longer starts with stereo. `reentry offload on` turns it on.
+
+- **Protection silences the inspector.** `SetMultithreadProtected(TRUE)` rewrites the function table
+  held inside the context (table at ctx+4, pointer unchanged) to separate thread-safe entry points.
+  The inline hooks stay on the old entries, so draw counts stop, and HUD capture and frame dumps go
+  dead with them. Measured: `DrawIndexed` 2,147,638 to 2,148,093 over 6 s after protection.
+- **Removing protection is not safe.** Soak without it: 20,831 D3D calls off the worker while it
+  drained, one drain fault at RVA 0x587451, and the game would not close. The calls were three
+  routes into one texture update at 0x4E83F0, on the game thread and a job thread.
+- **Re-hooking failed.** Inline hooks on the protected entries, and writing detours into the table
+  of the context seen in a draw, both killed the game at once. Writing the table of the context
+  from `GetImmediateContext` before any inline hook ran, but draws never arrived.
+- **In the headset the gain did not show.** The stereo pair sat at 36 on Air Link at 72 Hz with the
+  worker on. Alternate-eye does not use the worker and held 72, so it is now the BS1 default.
