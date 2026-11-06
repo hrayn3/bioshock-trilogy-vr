@@ -3547,6 +3547,11 @@ Melee: tick 0x70BC0 passes the hit box pose to 0x70570 (thiscall, ret 0xC: colle
 extents) and the view to 0x6FAF0 (ret 0xC: collector, FVector*, FRotator*). Both are hooked to use the
 right hand's ray for the wrench. Hooks run live; whether hits land right needs the headset.
 
+Use highlight: effect event `BecameUseFocus` on the actor. `TriggerEffectEvent` 0x19BF70 (thiscall, ret 0x30:
+FName event, other, material, FVector*, FRotator*, onOther, queryOnly, observer, FName tag, info), untrigger
+0x19C0B0 (FName event, FName tag). FName is 8 bytes, ctor 0x496D20 (wchar_t*, 2, 1). The effect holds until
+untriggered. Calls exercised live on a loose body with no fault; the look is unconfirmed.
+
 D3D multithread protection rewrites the function table inside the context (ctx+4), so inline hooks on the
 old entries stop firing. Hooking the protected entries, inline or in the table, crashed or missed draws.
 Stepped inside `ULevel::Tick` with 0 worker threads, so CalcView is outside the step.
