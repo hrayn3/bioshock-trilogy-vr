@@ -415,7 +415,6 @@ inline constexpr uint32_t kHkBodyAngularOffset = 0x1C0;
 inline constexpr uint32_t kHkBodyPropsOffset = 0x7C;
 inline constexpr uint32_t kHkMotionSetLinearVt = 0x40;
 inline constexpr uint32_t kHkMotionSetAngularVt = 0x44;
-inline constexpr uint32_t kActorRagdollOffset = 0x41C;
 inline uint32_t kHavokActorVtableRva = 0;
 inline constexpr uint32_t kActorLevelOffset = 0xFC;
 inline constexpr uint32_t kLevelHavokOffset = 0x427C;

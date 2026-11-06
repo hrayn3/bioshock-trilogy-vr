@@ -382,7 +382,7 @@ void* body_actor(void* body) {
     return nullptr;
 }
 
-enum TkReject { kTkOk, kTkSelf, kTkFixed, kTkNoWorld, kTkNoActor, kTkPlayer, kTkRagdoll, kTkHeavy, kTkCount };
+enum TkReject { kTkOk, kTkSelf, kTkFixed, kTkNoWorld, kTkNoActor, kTkPlayer, kTkHeavy, kTkCount };
 uint32_t g_tkRejects[kTkCount] = {};
 
 TkReject grab_verdict(void* body) {
@@ -398,11 +398,6 @@ TkReject grab_verdict(void* body) {
     void* actor = body_actor(body);
     if (!actor) return kTkNoActor;
     if (actor == g_pawn) return kTkPlayer;
-    void* rag = nullptr;
-    void* live = nullptr;
-    if (read_ptr(static_cast<uint8_t*>(actor) + patterns::kActorRagdollOffset, &rag) &&
-        read_ptr(static_cast<uint8_t*>(rag) + 0x40, &live))
-        return kTkRagdoll;
     __try {
         float kg = fn<MassFn>(patterns::kHkGetMassRva)(b + patterns::kHkBodyMotionOffset, nullptr);
         if (kg > kTkMaxKg) return kTkHeavy;
@@ -537,12 +532,11 @@ void telekinesis_tick(const float handUu[3], const float dir[3], bool grip) {
         if (grip && !g_tkGripWas) {
             g_tkBody = tk_find(hand);
             if (g_tkBody) ++g_tkGrabs;
-            BVR_LOG("[tk] grip: %s (ok %u self %u fixed %u noworld %u noactor %u player %u ragdoll "
-                    "%u heavy %u)",
+            BVR_LOG("[tk] grip: %s (ok %u self %u fixed %u noworld %u noactor %u player %u "
+                    "heavy %u)",
                     g_tkBody ? "got one" : "nothing in reach", g_tkRejects[kTkOk],
                     g_tkRejects[kTkSelf], g_tkRejects[kTkFixed], g_tkRejects[kTkNoWorld],
-                    g_tkRejects[kTkNoActor], g_tkRejects[kTkPlayer], g_tkRejects[kTkRagdoll],
-                    g_tkRejects[kTkHeavy]);
+                    g_tkRejects[kTkNoActor], g_tkRejects[kTkPlayer], g_tkRejects[kTkHeavy]);
             memset(g_tkRejects, 0, sizeof g_tkRejects);
         }
     } else if (!vtable_is(g_tkBody, kBodyVtableRva)) {
