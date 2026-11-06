@@ -980,7 +980,10 @@ void apply_vr_preset() {
     load_vr_preset_values();           // tuned sliders (ini) over defaults
     aim::note_preset_baseline();       // seed source for new weapon profiles
     aim::reapply_weapon_profile();     // the active weapon profile beats the baseline
-    scenedraw::handle_command("vrstereo on"); // last: 1t + stereo, sticky
+    // Alternate-eye holds 72 in the headset, where the stereo pair sits at 36 with
+    // black edges on fast turns (Hugh, 2026-11-06). `vrstereo on` is the pair.
+    bvr::vr::set_camera_mode(true);
+    bvr::vr::set_alternate_eye(true);
     BVR_LOG("[b1r] VR PRESET 1 armed (unwind: vrstereo off + overlay checkboxes)");
 }
 
