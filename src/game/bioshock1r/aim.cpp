@@ -1393,6 +1393,24 @@ void on_calcview(const FrameContext& ctx) {
     lc.hand = hands::active_hand();
     int lh = lc.hand == 0 ? 0 : 1;
     bvr::input::publish_plasmid_up(lh == 0);
+    {
+        static uint64_t s_nextLog = 0;
+        uint64_t nowMs = GetTickCount64();
+        if (nowMs >= s_nextLog) {
+            s_nextLog = nowMs + 500;
+            void* hold = nullptr;
+            bool rig = hands::current_holdable(&hold);
+            uint8_t lt = 0, rt = 0;
+            bool lb = false, rb = false;
+            bvr::input::last_composed_triggers(&lt, &rt);
+            bvr::input::last_composed_bumpers(&lb, &rb);
+            BVR_LOG("[hand] lh=%d rig=%d hold=%p key=%s valid=%d/%d view=%d driving=%d lt=%u rt=%u "
+                    "lb=%d rb=%d",
+                    lh, rig ? 1 : 0, hold, g_weaponKey.c_str(), g_ray[0].valid ? 1 : 0,
+                    g_ray[1].valid ? 1 : 0, g_gameplayView ? 1 : 0, ctx.vrDriving ? 1 : 0, lt, rt,
+                    lb ? 1 : 0, rb ? 1 : 0);
+        }
+    }
     lc.pitchTrimDeg = g_pitchOffsetDeg[lh].load(std::memory_order_relaxed);
     lc.yawTrimDeg = g_yawOffsetDeg[lh].load(std::memory_order_relaxed);
     lc.posFwdCm = g_posFwdCm[lh].load(std::memory_order_relaxed);
