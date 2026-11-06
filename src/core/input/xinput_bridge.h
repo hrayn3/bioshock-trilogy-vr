@@ -51,6 +51,12 @@ bool plasmid_up();
 // The game layer says a reloadable gun is up, so a sharp upward jerk of it reloads.
 void publish_reload_gate(bool armed);
 bool reload_gate();
+// Free-hand grip: in gameplay, the grip on the hand with nothing in it stops being
+// a bumper and is reported here instead. Off by default.
+void set_free_hand_grip(bool on);
+bool free_hand_grip_on();
+void publish_free_grip(bool held);
+bool free_grip_held();
 
 // Session 30. The pitch kill stops the stick fighting the HMD, but it also
 // freezes the ENGINE's own view pitch forever - and camera.cpp writes the

@@ -141,6 +141,10 @@ void apply_gog_addresses() {
     kXInputGetStateIatRva = 0xBC6A7C;
     kXInputSetStateIatRva = 0xBC6A80;
     kLineCheckVtblOffset = 0x168;
+    kHkActivateRva = 0x6C04C0;
+    kHkGetMassRva = 0x6D0300;
+    kMeleePoseRva = 0x70570;
+    kMeleeViewRva = 0x6FAF0;
     kHkTlsSlotRva = 0x117EC84;
     kHkRemoveRefRva = 0x60E630;
     kHkCapsuleCtorRva = 0x7F6B20;

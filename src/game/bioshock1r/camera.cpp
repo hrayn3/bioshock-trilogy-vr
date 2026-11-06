@@ -981,6 +981,7 @@ void apply_vr_preset() {
     // Hugh, 2026-11-06: turning is the head and body, so the stick flicks ammo.
     bvr::input::set_ammo_mod(bvr::input::AmmoMod::Free);
     bvr::vr::set_hand_smoothing(true);
+    bvr::input::set_free_hand_grip(patterns::kHkActivateRva != 0);
     aim::note_preset_baseline();       // seed source for new weapon profiles
     aim::reapply_weapon_profile();     // the active weapon profile beats the baseline
     // Alternate-eye holds 72 in the headset, where the stereo pair sits at 36 with

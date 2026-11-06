@@ -344,6 +344,129 @@ bool sweep_target(float pos[4]) {
     return true;
 }
 
+// ---- minor telekinesis ------------------------------------------------------
+constexpr float kTkReachHk = 3.0f;  // 1.5 m
+constexpr float kTkHoldHk = 0.7f;   // 35 cm in front of the hand
+constexpr float kTkGain = 14.0f;    // per second, of the gap to the hold point
+constexpr float kTkMaxSpeedHk = 30.0f;
+constexpr float kTkThrowScale = 1.5f;
+constexpr float kTkMaxKg = 80.0f;
+constexpr float kTkSpinKeep = 0.9f;
+constexpr uint64_t kTkStepMs = 8;
+using VecFn = void(__fastcall*)(void* motion, void*, const float* v);
+using MassFn = float(__fastcall*)(void* motion, void*);
+
+void* g_pawn = nullptr;
+void* g_tkBody = nullptr;
+bool g_tkGripWas = false;
+uint64_t g_tkLastMs = 0;
+float g_tkHandLast[3] = {};
+float g_tkHandVel[3] = {};
+bool g_tkHaveHand = false;
+std::atomic<bool> g_tkEnabled{true};
+uint32_t g_tkGrabs = 0;
+
+void* body_actor(void* body) {
+    __try {
+        uint8_t* b = static_cast<uint8_t*>(body);
+        uint8_t* props = *reinterpret_cast<uint8_t**>(b + patterns::kHkBodyPropsOffset);
+        int count = *reinterpret_cast<int*>(b + patterns::kHkBodyPropsOffset + 4);
+        for (int i = 0; props && i < count && i < 16; ++i) {
+            uint8_t* e = props + i * 16;
+            if (*reinterpret_cast<uint32_t*>(e) == 0) return *reinterpret_cast<void**>(e + 8);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return nullptr;
+}
+
+bool grabbable(void* body) {
+    if (!vtable_is(body, kBodyVtableRva) || body == g_body) return false;
+    uint8_t* b = static_cast<uint8_t*>(body);
+    __try {
+        uint8_t motion = *(b + kBodyMotionTypeOffset);
+        if (motion == 4 || motion == 5) return false;
+        if (!*reinterpret_cast<void**>(b + patterns::kHkBodyWorldOffset)) return false;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    void* actor = body_actor(body);
+    if (!actor || actor == g_pawn) return false;
+    void* rag = nullptr;
+    void* live = nullptr;
+    if (read_ptr(static_cast<uint8_t*>(actor) + patterns::kActorRagdollOffset, &rag) &&
+        read_ptr(static_cast<uint8_t*>(rag) + 0x40, &live))
+        return false; // ragdoll bones
+    __try {
+        float kg = fn<MassFn>(patterns::kHkGetMassRva)(b + patterns::kHkBodyMotionOffset, nullptr);
+        if (kg > kTkMaxKg) return false;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+void tk_scan_island(void* island, const float hand[3], void** best, float* bestDist) {
+    __try {
+        const uint8_t* o = static_cast<const uint8_t*>(island);
+        for (uint32_t off = 0x08; off < 0x80; off += 4) {
+            void** data = *reinterpret_cast<void** const*>(o + off);
+            int count = *reinterpret_cast<const int*>(o + off + 4);
+            if (!data || count <= 0 || count > 4096 ||
+                reinterpret_cast<uintptr_t>(data) < 0x10000)
+                continue;
+            if (!vtable_is(data[0], kBodyVtableRva)) continue;
+            for (int i = 0; i < count; ++i) {
+                float p[3];
+                if (!read_pos(data[i], p)) continue;
+                float d[3] = {p[0] - hand[0], p[1] - hand[1], p[2] - hand[2]};
+                float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                if (dist < *bestDist && grabbable(data[i])) {
+                    *bestDist = dist;
+                    *best = data[i];
+                }
+            }
+            break;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+void* tk_find(const float hand[3]) {
+    void* best = nullptr;
+    float bestDist = kTkReachHk;
+    __try {
+        const uint8_t* w = static_cast<const uint8_t*>(g_world);
+        const uint32_t arrays[2] = {kWorldActiveIslandsOffset, kWorldInactiveIslandsOffset};
+        for (uint32_t arr : arrays) {
+            void** islands = *reinterpret_cast<void** const*>(w + arr);
+            int n = *reinterpret_cast<const int*>(w + arr + 4);
+            for (int i = 0; i < n && i < 512; ++i) tk_scan_island(islands[i], hand, &best, &bestDist);
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+    return best;
+}
+
+bool tk_drive(void* body, const float vel[4], const float spin[4]) {
+    __try {
+        fn<ThisFn>(patterns::kHkActivateRva)(body, nullptr);
+        uint8_t* motion = static_cast<uint8_t*>(body) + patterns::kHkBodyMotionOffset;
+        void** vt = *reinterpret_cast<void***>(motion);
+        reinterpret_cast<VecFn>(vt[patterns::kHkMotionSetLinearVt / 4])(motion, nullptr, vel);
+        reinterpret_cast<VecFn>(vt[patterns::kHkMotionSetAngularVt / 4])(motion, nullptr, spin);
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+void clamp_speed(float v[3]) {
+    float len = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (len > kTkMaxSpeedHk)
+        for (int i = 0; i < 3; ++i) v[i] *= kTkMaxSpeedHk / len;
+}
+
 void log_status() {
     int16_t refs = 0;
     float pos[3] = {};
@@ -369,10 +492,73 @@ void on_world_change() {
     g_body = nullptr;
     g_world = nullptr;
     g_havok = nullptr;
+    g_tkBody = nullptr;
     g_builtKey.clear();
     g_trackedCount = 0;
     g_sweep.index = -1;
     g_keyChangeMs = GetTickCount64(); // a load plays the equip animation
+}
+
+void telekinesis_tick(const float handUu[3], const float dir[3], bool grip) {
+    if (!patterns::kHkActivateRva || !g_tkEnabled.load(std::memory_order_relaxed) || !g_world ||
+        g_forceOff.load(std::memory_order_relaxed))
+        return;
+    uint64_t now = GetTickCount64();
+    uint64_t stepMs = now - g_tkLastMs;
+    if (stepMs < kTkStepMs) return;
+    g_tkLastMs = now;
+    uint32_t critical = 0;
+    if (!read_u32(static_cast<uint8_t*>(g_world) + patterns::kHkWorldCriticalLockOffset, &critical) ||
+        critical != 0)
+        return;
+
+    const float hand[3] = {handUu[0] * kHkPerUu, handUu[1] * kHkPerUu, handUu[2] * kHkPerUu};
+    if (g_tkHaveHand && stepMs < 100) {
+        float dt = static_cast<float>(stepMs) * 0.001f;
+        for (int i = 0; i < 3; ++i)
+            g_tkHandVel[i] += ((hand[i] - g_tkHandLast[i]) / dt - g_tkHandVel[i]) * 0.5f;
+    }
+    memcpy(g_tkHandLast, hand, sizeof g_tkHandLast);
+    g_tkHaveHand = true;
+
+    if (!g_tkBody) {
+        if (grip && !g_tkGripWas) {
+            g_tkBody = tk_find(hand);
+            if (g_tkBody) ++g_tkGrabs;
+            BVR_LOG("[tk] grip: %s", g_tkBody ? "got one" : "nothing in reach");
+        }
+    } else if (!vtable_is(g_tkBody, kBodyVtableRva)) {
+        g_tkBody = nullptr;
+    } else if (!grip) {
+        alignas(16) float vel[4] = {g_tkHandVel[0] * kTkThrowScale, g_tkHandVel[1] * kTkThrowScale,
+                                    g_tkHandVel[2] * kTkThrowScale, 0.0f};
+        clamp_speed(vel);
+        alignas(16) float spin[4] = {};
+        tk_drive(g_tkBody, vel, spin);
+        BVR_LOG("[tk] released at %.1f m/s",
+                sqrtf(vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]) * 0.5f);
+        g_tkBody = nullptr;
+    } else {
+        float p[3];
+        if (!read_pos(g_tkBody, p)) {
+            g_tkBody = nullptr;
+        } else {
+            alignas(16) float vel[4] = {};
+            for (int i = 0; i < 3; ++i) vel[i] = (hand[i] + dir[i] * kTkHoldHk - p[i]) * kTkGain;
+            clamp_speed(vel);
+            alignas(16) float spin[4] = {};
+            __try {
+                memcpy(spin, static_cast<uint8_t*>(g_tkBody) + patterns::kHkBodyAngularOffset, 16);
+            } __except (EXCEPTION_EXECUTE_HANDLER) {
+            }
+            for (int i = 0; i < 3; ++i) spin[i] *= kTkSpinKeep;
+            if (!tk_drive(g_tkBody, vel, spin)) {
+                BVR_LOG("[tk] drive faulted, letting go");
+                g_tkBody = nullptr;
+            }
+        }
+    }
+    g_tkGripWas = grip;
 }
 
 void on_frame(const GamePose& gp, int hand) {
@@ -387,6 +573,7 @@ void on_frame(const GamePose& gp, int hand) {
         !read_ptr(static_cast<uint8_t*>(hold) + patterns::kWeaponOwnerOffset, &pawn) ||
         !vtable_is(pawn, patterns::kShockPlayerVtableRva))
         return;
+    g_pawn = pawn;
     void* level = nullptr;
     void* havok = nullptr;
     void* world = nullptr;
@@ -505,6 +692,10 @@ void handle_command(const char* args) {
         }
         g_builtKey.clear();
         BVR_LOG("[phys] off");
+    } else if (strncmp(args, "tk", 2) == 0) {
+        g_tkEnabled.store(strstr(args, "off") == nullptr, std::memory_order_relaxed);
+        BVR_LOG("[tk] %s, %u grabs, holding %p",
+                g_tkEnabled.load(std::memory_order_relaxed) ? "on" : "off", g_tkGrabs, g_tkBody);
     } else if (strncmp(args, "near", 4) == 0) {
         g_nearPending = true;
         g_nearLooseOnly = strstr(args, "loose") != nullptr;

@@ -20,6 +20,7 @@
 #include "game/bioshock1r/body.h"
 #include "game/bioshock1r/bones.h"
 #include "game/bioshock1r/hands.h"
+#include "game/bioshock1r/physhand.h"
 #include "game/shared/ue_math.h"
 
 #include <windows.h>
@@ -115,6 +116,7 @@ struct WeaponProfile {
 };
 std::map<std::string, WeaponProfile> g_weaponProfiles;
 std::string g_weaponKey;          // active profile key ("" = none)
+
 void* g_weaponKeyActor = nullptr; // weapon pointer the key was resolved from
 bool g_weaponKeySim = false;      // a sim key is armed (flat test seam)
 uint32_t g_weaponSwaps = 0;
@@ -158,7 +160,81 @@ struct Ray {
 };
 Ray g_ray[2]; // 0 = left (plasmid), 1 = right (weapon)
 uint64_t g_rayStampMs = 0;
+
+// Melee from the hand. The wrench's hit box takes one pose per tick and its damage
+// check one view; both come from the engine's view, so a swing to the side still
+// hits forward. Handing them the swung hand's ray puts the hit where the wrench is.
+constexpr float kMeleeReachUu = 45.0f;
+constexpr uint64_t kMeleeRayMaxAgeMs = 250;
+std::atomic<bool> g_meleeFromHand{true};
+using MeleeFn = void(__fastcall*)(void* self, void*, void* collector, void* a, void* b);
+MeleeFn g_origMeleePose = nullptr;
+MeleeFn g_origMeleeView = nullptr;
+bool melee_gate(); // defined below, needs the gameplay gate
+
+bool melee_ray(float dir[3]) {
+    if (!g_meleeFromHand.load(std::memory_order_relaxed) || !g_ray[1].valid || !melee_gate())
+        return false;
+    ue_rot_to_dir(g_ray[1].rot, dir);
+    return true;
+}
+
+void __fastcall MeleePoseDetour(void* self, void* edx, void* collector, void* pose, void* scale) {
+    float x[3];
+    if (!melee_ray(x)) {
+        g_origMeleePose(self, edx, collector, pose, scale);
+        return;
+    }
+    // FMatrix rows X, Y, Z, translation, in UU.
+    float horiz = sqrtf(x[0] * x[0] + x[1] * x[1]);
+    float y[3] = {1.0f, 0.0f, 0.0f};
+    if (horiz > 0.001f) {
+        y[0] = -x[1] / horiz;
+        y[1] = x[0] / horiz;
+        y[2] = 0.0f;
+    }
+    float z[3] = {x[1] * y[2] - x[2] * y[1], x[2] * y[0] - x[0] * y[2], x[0] * y[1] - x[1] * y[0]};
+    const FVector& o = g_ray[1].origin;
+    alignas(16) float m[16] = {x[0], x[1], x[2], 0.0f, y[0], y[1], y[2], 0.0f, z[0], z[1], z[2], 0.0f,
+                               o.x + x[0] * kMeleeReachUu, o.y + x[1] * kMeleeReachUu,
+                               o.z + x[2] * kMeleeReachUu, 1.0f};
+    g_origMeleePose(self, edx, collector, m, scale);
+}
+
+void __fastcall MeleeViewDetour(void* self, void* edx, void* collector, void* cam, void* rot) {
+    float x[3];
+    if (!melee_ray(x)) {
+        g_origMeleeView(self, edx, collector, cam, rot);
+        return;
+    }
+    FVector o = g_ray[1].origin;
+    FRotator r = g_ray[1].rot;
+    g_origMeleeView(self, edx, collector, &o, &r);
+}
+
+void install_melee_hooks(const uint8_t* base) {
+    if (!patterns::kMeleePoseRva || !patterns::kMeleeViewRva) return;
+    void* pose = const_cast<uint8_t*>(base) + patterns::kMeleePoseRva;
+    void* view = const_cast<uint8_t*>(base) + patterns::kMeleeViewRva;
+    bool ok = MH_CreateHook(pose, reinterpret_cast<void*>(&MeleePoseDetour),
+                            reinterpret_cast<void**>(&g_origMeleePose)) == MH_OK &&
+              MH_CreateHook(view, reinterpret_cast<void*>(&MeleeViewDetour),
+                            reinterpret_cast<void**>(&g_origMeleeView)) == MH_OK &&
+              MH_EnableHook(pose) == MH_OK && MH_EnableHook(view) == MH_OK;
+    BVR_LOG("[aim] melee from the hand: hooks %s", ok ? "live" : "FAILED");
+}
 bool g_gameplayView = false;
+
+bool melee_gate() {
+    static bool s_logged = false;
+    bool open = g_gameplayView && g_weaponKey == "Wrench" &&
+                GetTickCount64() - g_rayStampMs <= kMeleeRayMaxAgeMs;
+    if (open && !s_logged) {
+        s_logged = true;
+        BVR_LOG("[aim] melee from the hand: first hit check moved to the hand");
+    }
+    return open;
+}
 // Copied out of the frame context each CalcView so the detours - which run far
 // above g_lastCtx's definition - can turn Unreal units into centimetres for the
 // watch line. A displacement is only meaningful next to the scale it lives in.
@@ -1162,6 +1238,7 @@ void init(const bvr::pattern_scan::ProcessImage& image, const patterns::Symbols&
     g_imageBase = image.base;
     g_image = image;
     g_syms = symbols;
+    install_melee_hooks(image.base);
     seed_default_profiles();
     load_weapon_profiles(); // a user's weapons.ini overrides the seeds key by key
     BVR_LOG("[aim] init: weapon fire-start=%p ability fire-start=%p", g_syms.weaponFireStart,
@@ -1458,6 +1535,17 @@ void on_calcview(const FrameContext& ctx) {
         }
     }
     bvr::vr::set_aim_dot(dc);
+
+    // The free hand: minor telekinesis on its grip.
+    {
+        const Ray& fr = g_ray[lh == 0 ? 1 : 0];
+        if (fr.valid && g_gameplayView) {
+            float frDir[3];
+            ue_rot_to_dir(fr.rot, frDir);
+            const float frPos[3] = {fr.origin.x, fr.origin.y, fr.origin.z};
+            physhand::telekinesis_tick(frPos, frDir, bvr::input::free_grip_held());
+        }
+    }
 }
 
 // ---- synccheck (session 20): ray-vs-barrel divergence sweep -----------------

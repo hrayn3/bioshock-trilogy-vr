@@ -681,8 +681,12 @@ void input_sync(XrSession session, XrTime predictedDisplayTime) {
     // can never build a half-switched pad.
     const PadMap& map = active_pad_map();
 
-    if (g_gripLatchedL) pad.buttons |= map.gripL;
-    if (g_gripLatchedR) pad.buttons |= map.gripR;
+    const bool freeGrip = bvr::input::free_hand_grip_on() && bvr::input::vr_gameplay_now();
+    const bool freeL = freeGrip && !bvr::input::plasmid_up();
+    const bool freeR = freeGrip && bvr::input::plasmid_up();
+    if (g_gripLatchedL && !freeL) pad.buttons |= map.gripL;
+    if (g_gripLatchedR && !freeR) pad.buttons |= map.gripR;
+    bvr::input::publish_free_grip((g_gripLatchedL && freeL) || (g_gripLatchedR && freeR));
 
     // The face buttons, from the table. What each bit MEANS in the game is in
     // the table's own comment; the composer only lands the bit.
@@ -761,7 +765,7 @@ void input_sync(XrSession session, XrTime predictedDisplayTime) {
     if (map.flick) {
         float rawX = 0.0f, rawY = 0.0f;
         read_vec2(session, g_look, &rawX, &rawY);
-        bool gripHeld = g_gripLatchedL || g_gripLatchedR;
+        bool gripHeld = (g_gripLatchedL && !freeL) || (g_gripLatchedR && !freeR);
 
         // Session 23: the modifier can also be the LEFT thumbrest. It has to be
         // the left one - the right thumb cannot rest on the right thumbrest and

@@ -791,6 +791,8 @@ void last_composed_sticks(int16_t* lx, int16_t* ly, int16_t* rx, int16_t* ry) {
 
 namespace {
 std::atomic<bool> g_plasmidUp{false};
+std::atomic<bool> g_freeHandGrip{false};
+std::atomic<bool> g_freeGripHeld{false};
 std::atomic<bool> g_reloadGate{false};
 std::atomic<uint64_t> g_reloadGateMs{0};
 } // namespace
@@ -798,6 +800,11 @@ std::atomic<uint64_t> g_reloadGateMs{0};
 void publish_plasmid_up(bool up) { g_plasmidUp.store(up, std::memory_order_relaxed); }
 
 bool plasmid_up() { return g_plasmidUp.load(std::memory_order_relaxed); }
+
+void set_free_hand_grip(bool on) { g_freeHandGrip.store(on, std::memory_order_relaxed); }
+bool free_hand_grip_on() { return g_freeHandGrip.load(std::memory_order_relaxed); }
+void publish_free_grip(bool held) { g_freeGripHeld.store(held, std::memory_order_relaxed); }
+bool free_grip_held() { return g_freeGripHeld.load(std::memory_order_relaxed); }
 
 void publish_reload_gate(bool armed) {
     g_reloadGate.store(armed, std::memory_order_relaxed);
