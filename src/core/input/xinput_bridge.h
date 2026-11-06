@@ -45,6 +45,9 @@ void last_xr_pad(Gamepad* pad, bool* active);
 // publishing stops, failing open to stock behavior.
 void publish_vr_gameplay(bool on);
 bool vr_gameplay_now();
+// The game layer says a plasmid is up, so a free right stick drives the plasmid wheel.
+void publish_plasmid_up(bool up);
+bool plasmid_up();
 
 // Session 30. The pitch kill stops the stick fighting the HMD, but it also
 // freezes the ENGINE's own view pitch forever - and camera.cpp writes the

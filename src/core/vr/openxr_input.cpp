@@ -162,6 +162,9 @@ XrAction g_aimR = XR_NULL_HANDLE;      // The runtime's own pointing ray; the gr
                                        // pose runs along the handle and reads
                                        // tens of degrees low as an aim vector.
 
+bool g_wheelHeld = false;
+float g_wheelX = 0.0f, g_wheelY = 0.0f;
+uint64_t g_wheelMinUntilMs = 0, g_wheelTailUntilMs = 0;
 XrSpace g_gripSpaceL = XR_NULL_HANDLE; // session children
 XrSpace g_gripSpaceR = XR_NULL_HANDLE;
 XrSpace g_aimSpaceL = XR_NULL_HANDLE;
@@ -763,9 +766,37 @@ void input_sync(XrSession session, XrTime predictedDisplayTime) {
                              bvr::input::vr_gameplay_now();
         const bool modHeld = clickMod || restMod || freeMod;
 
+        // Plasmid up on a free stick: the stick is the wheel. Pushed, it holds the
+        // plasmid bumper with the stick where it points; centred, the bumper lets
+        // go a beat before the stick, because the wheel takes the slot at release.
+        if (freeMod && bvr::input::plasmid_up() && !gripHeld) {
+            constexpr uint64_t kWheelMinMs = 220, kWheelTailMs = 60;
+            const bool pushed = fabsf(rawX) >= kFlickPress || fabsf(rawY) >= kFlickPress;
+            const bool centred = fabsf(rawX) < kFlickRearm && fabsf(rawY) < kFlickRearm;
+            if (pushed) {
+                if (!g_wheelHeld) g_wheelMinUntilMs = now + kWheelMinMs;
+                g_wheelHeld = true;
+                g_wheelX = rawX;
+                g_wheelY = rawY;
+            } else if (g_wheelHeld && centred && now >= g_wheelMinUntilMs) {
+                g_wheelHeld = false;
+                g_wheelTailUntilMs = now + kWheelTailMs;
+            }
+            pad.rx = 0;
+            pad.ry = 0;
+            if (g_wheelHeld) pad.buttons |= XINPUT_GAMEPAD_LEFT_SHOULDER;
+            if (g_wheelHeld || now < g_wheelTailUntilMs) {
+                pad.rx = static_cast<int16_t>(g_wheelX * 32767.0f);
+                pad.ry = static_cast<int16_t>(g_wheelY * 32767.0f);
+            }
+        } else if (g_wheelHeld) {
+            g_wheelHeld = false;
+        }
+        const bool wheelStick = freeMod && bvr::input::plasmid_up();
+
         if (modHeld && !g_rsClickWasDown) g_flickArmed = true;
         g_rsClickWasDown = modHeld;
-        if (modHeld && !gripHeld) {
+        if (modHeld && !gripHeld && !wheelStick) {
             // Turn suppression. RS-click never reaches the game, so killing turn
             // for its whole hold costs nothing. A thumb PARKED on the thumbrest
             // is not a deliberate gesture though - suppressing turn for as long

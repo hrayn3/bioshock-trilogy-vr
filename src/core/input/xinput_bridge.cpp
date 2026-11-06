@@ -789,6 +789,14 @@ void last_composed_sticks(int16_t* lx, int16_t* ly, int16_t* rx, int16_t* ry) {
     if (ry) *ry = g_lastComposed.ry;
 }
 
+namespace {
+std::atomic<bool> g_plasmidUp{false};
+} // namespace
+
+void publish_plasmid_up(bool up) { g_plasmidUp.store(up, std::memory_order_relaxed); }
+
+bool plasmid_up() { return g_plasmidUp.load(std::memory_order_relaxed); }
+
 bool vr_gameplay_now() {
     return g_vrGameplay.load(std::memory_order_relaxed) &&
            GetTickCount64() - g_vrGameplayLastMs.load(std::memory_order_relaxed) <=

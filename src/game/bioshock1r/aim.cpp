@@ -144,7 +144,7 @@ std::atomic<float> g_laserNearM{0.30f}, g_laserFarM{6.0f}, g_laserSizeDeg{0.7f};
 // hole". BioVRDev's dot has the same shape and the same limitation.
 std::atomic<bool> g_dot{true};
 std::atomic<float> g_dotDistM{5.0f};
-std::atomic<float> g_dotSizeDeg{0.5f};
+std::atomic<float> g_dotSizeDeg{0.7f};
 constexpr float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
 std::atomic<int32_t> g_dumpBudget{0}; // per-seam detailed log budget
 
@@ -1392,6 +1392,7 @@ void on_calcview(const FrameContext& ctx) {
     lc.enabled = g_laser.load(std::memory_order_relaxed) && ctx.vrDriving && g_gameplayView;
     lc.hand = hands::active_hand();
     int lh = lc.hand == 0 ? 0 : 1;
+    bvr::input::publish_plasmid_up(lh == 0);
     lc.pitchTrimDeg = g_pitchOffsetDeg[lh].load(std::memory_order_relaxed);
     lc.yawTrimDeg = g_yawOffsetDeg[lh].load(std::memory_order_relaxed);
     lc.posFwdCm = g_posFwdCm[lh].load(std::memory_order_relaxed);
@@ -1434,15 +1435,22 @@ void on_calcview(const FrameContext& ctx) {
         FVector end{dr.origin.x + dir[0] * distUu, dr.origin.y + dir[1] * distUu,
                     dr.origin.z + dir[2] * distUu};
         // Clear of the hand, which can start inside something the check reports.
-        constexpr float kDotClearM = 0.3f;
+        constexpr float kDotClearM = 0.6f;
         float clearUu = kDotClearM * ctx.worldScale;
         FVector start{dr.origin.x + dir[0] * clearUu, dr.origin.y + dir[1] * clearUu,
                       dr.origin.z + dir[2] * clearUu};
         FVector at{};
+        // A miss (sky, past the range) keeps the dot on the ray at its last distance.
+        static float s_lastDistUu = 5.0f * ctx.worldScale;
         if (surface_hit(start, end, &at)) {
-            game_point_to_xr(ctx, at, dc.posXr);
-            dc.valid = true;
+            float dx = at.x - dr.origin.x, dy = at.y - dr.origin.y, dz = at.z - dr.origin.z;
+            s_lastDistUu = sqrtf(dx * dx + dy * dy + dz * dz);
+        } else {
+            at = {dr.origin.x + dir[0] * s_lastDistUu, dr.origin.y + dir[1] * s_lastDistUu,
+                  dr.origin.z + dir[2] * s_lastDistUu};
         }
+        game_point_to_xr(ctx, at, dc.posXr);
+        dc.valid = true;
 
         // The inverse is only worth trusting if it round-trips. Check it ONCE
         // against the forward map on real data and say so in words - a
