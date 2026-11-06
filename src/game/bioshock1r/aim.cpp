@@ -328,7 +328,8 @@ using LineCheckFn = int(__fastcall*)(void* level, void*, void* hit, void* source
                                      const FVector* start, uint32_t flags, const FVector* extent,
                                      uint32_t zero);
 
-bool line_check_raw(void* level, void* pawn, const FVector& start, const FVector& end, FVector* at) {
+bool line_check_raw(void* level, void* pawn, const FVector& start, const FVector& end, FVector* at,
+                    void** actor) {
     __try {
         void** vtbl = *static_cast<void***>(level);
         auto check = reinterpret_cast<LineCheckFn>(vtbl[patterns::kLineCheckVtblOffset / 4]);
@@ -341,6 +342,7 @@ bool line_check_raw(void* level, void* pawn, const FVector& start, const FVector
         if (clear != 0 || !*reinterpret_cast<void**>(hit + patterns::kCheckResultActorOffset))
             return false;
         memcpy(at, hit + patterns::kCheckResultLocationOffset, sizeof(FVector));
+        if (actor) *actor = *reinterpret_cast<void**>(hit + patterns::kCheckResultActorOffset);
         return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
@@ -348,7 +350,7 @@ bool line_check_raw(void* level, void* pawn, const FVector& start, const FVector
 }
 
 // First surface on the ray, skipping the player. Game thread only.
-bool surface_hit(const FVector& start, const FVector& end, FVector* at) {
+bool surface_hit(const FVector& start, const FVector& end, FVector* at, void** actor = nullptr) {
     if (!patterns::kLineCheckVtblOffset) return false;
     void* hold = nullptr;
     void* pawn = nullptr;
@@ -357,7 +359,7 @@ bool surface_hit(const FVector& start, const FVector& end, FVector* at) {
         !read_ptr(static_cast<uint8_t*>(hold) + patterns::kWeaponOwnerOffset, &pawn) || !pawn ||
         !read_ptr(static_cast<uint8_t*>(pawn) + patterns::kActorLevelOffset, &level) || !level)
         return false;
-    return line_check_raw(level, pawn, start, end, at);
+    return line_check_raw(level, pawn, start, end, at, actor);
 }
 
 // ---- ownership gates -------------------------------------------------------
@@ -1543,7 +1545,15 @@ void on_calcview(const FrameContext& ctx) {
             float frDir[3];
             ue_rot_to_dir(fr.rot, frDir);
             const float frPos[3] = {fr.origin.x, fr.origin.y, fr.origin.z};
-            physhand::telekinesis_tick(frPos, frDir, bvr::input::free_grip_held());
+            // What the hand's ray actually touches outranks the cone around it.
+            constexpr float kGrabRangeM = 2.0f;
+            float rangeUu = kGrabRangeM * ctx.worldScale;
+            FVector rayEnd{fr.origin.x + frDir[0] * rangeUu, fr.origin.y + frDir[1] * rangeUu,
+                           fr.origin.z + frDir[2] * rangeUu};
+            FVector rayAt{};
+            void* rayActor = nullptr;
+            surface_hit(fr.origin, rayEnd, &rayAt, &rayActor);
+            physhand::telekinesis_tick(frPos, frDir, bvr::input::free_grip_held(), rayActor);
         }
         bvr::vr::AimDotConfig mark{};
         mark.enabled = true;

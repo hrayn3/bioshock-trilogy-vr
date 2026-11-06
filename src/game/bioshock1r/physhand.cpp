@@ -368,6 +368,7 @@ float g_tkHandVel[3] = {};
 bool g_tkHaveHand = false;
 std::atomic<bool> g_tkEnabled{true};
 uint32_t g_tkGrabs = 0;
+void* g_tkRayActor = nullptr; // what the hand's ray hit this tick
 void* g_tkAim = nullptr; // what the grip would take right now
 uint64_t g_tkAimMs = 0;
 constexpr uint64_t kTkAimMs = 100;
@@ -437,6 +438,7 @@ void tk_scan_island(void* island, const float hand[3], const float dir[3], void*
                 if (dist > g_tkReachHk || along <= 0.0f) continue;
                 float off[3] = {d[0] - dir[0] * along, d[1] - dir[1] * along, d[2] - dir[2] * along};
                 float offTan = sqrtf(off[0] * off[0] + off[1] * off[1] + off[2] * off[2]) / along;
+                if (g_tkRayActor && body_actor(data[i]) == g_tkRayActor) offTan = -1.0f;
                 if (offTan < *bestOff && grabbable(data[i])) {
                     *bestOff = offTan;
                     *best = data[i];
@@ -516,7 +518,8 @@ void on_world_change() {
     g_keyChangeMs = GetTickCount64(); // a load plays the equip animation
 }
 
-void telekinesis_tick(const float handUu[3], const float dir[3], bool grip) {
+void telekinesis_tick(const float handUu[3], const float dir[3], bool grip, void* rayActor) {
+    g_tkRayActor = rayActor;
     if (!patterns::kHkActivateRva || !g_tkEnabled.load(std::memory_order_relaxed) || !g_world ||
         g_forceOff.load(std::memory_order_relaxed))
         return;

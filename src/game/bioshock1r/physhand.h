@@ -15,7 +15,7 @@ void on_frame(const GamePose& gp, int hand);
 // Pulls the nearest loose prop to the hand and hovers it; letting go throws it
 // with the hand's motion. Copies the game's own Telekinesis hold, without the
 // listener that makes thrown props hurt.
-void telekinesis_tick(const float handUu[3], const float dir[3], bool grip);
+void telekinesis_tick(const float handUu[3], const float dir[3], bool grip, void* rayActor);
 // Where the object the grip would take sits, in UU. False when there is none.
 bool telekinesis_target(float uu[3]);
 void handle_command(const char* args);
