@@ -281,20 +281,7 @@ bool surface_hit(const FVector& start, const FVector& end, FVector* at) {
         !read_ptr(static_cast<uint8_t*>(hold) + patterns::kWeaponOwnerOffset, &pawn) || !pawn ||
         !read_ptr(static_cast<uint8_t*>(pawn) + patterns::kActorLevelOffset, &level) || !level)
         return false;
-    bool hit = line_check_raw(level, pawn, start, end, at);
-    static uint32_t s_tries = 0, s_hits = 0;
-    static uint64_t s_lastLog = 0;
-    ++s_tries;
-    if (hit) ++s_hits;
-    uint64_t now = GetTickCount64();
-    if (now - s_lastLog >= 2000) {
-        s_lastLog = now;
-        float dx = at->x - start.x, dy = at->y - start.y, dz = at->z - start.z;
-        BVR_LOG("[aim] plasmid dot: %u of %u rays hit, last %.0f UU", s_hits, s_tries,
-                hit ? sqrtf(dx * dx + dy * dy + dz * dz) : -1.0f);
-        s_tries = s_hits = 0;
-    }
-    return hit;
+    return line_check_raw(level, pawn, start, end, at);
 }
 
 // ---- ownership gates -------------------------------------------------------
@@ -1393,24 +1380,6 @@ void on_calcview(const FrameContext& ctx) {
     lc.hand = hands::active_hand();
     int lh = lc.hand == 0 ? 0 : 1;
     bvr::input::publish_plasmid_up(lh == 0);
-    {
-        static uint64_t s_nextLog = 0;
-        uint64_t nowMs = GetTickCount64();
-        if (nowMs >= s_nextLog) {
-            s_nextLog = nowMs + 500;
-            void* hold = nullptr;
-            bool rig = hands::current_holdable(&hold);
-            uint8_t lt = 0, rt = 0;
-            bool lb = false, rb = false;
-            bvr::input::last_composed_triggers(&lt, &rt);
-            bvr::input::last_composed_bumpers(&lb, &rb);
-            BVR_LOG("[hand] lh=%d rig=%d hold=%p key=%s valid=%d/%d view=%d driving=%d lt=%u rt=%u "
-                    "lb=%d rb=%d",
-                    lh, rig ? 1 : 0, hold, g_weaponKey.c_str(), g_ray[0].valid ? 1 : 0,
-                    g_ray[1].valid ? 1 : 0, g_gameplayView ? 1 : 0, ctx.vrDriving ? 1 : 0, lt, rt,
-                    lb ? 1 : 0, rb ? 1 : 0);
-        }
-    }
     lc.pitchTrimDeg = g_pitchOffsetDeg[lh].load(std::memory_order_relaxed);
     lc.yawTrimDeg = g_yawOffsetDeg[lh].load(std::memory_order_relaxed);
     lc.posFwdCm = g_posFwdCm[lh].load(std::memory_order_relaxed);
