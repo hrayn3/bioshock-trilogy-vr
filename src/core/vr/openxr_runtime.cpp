@@ -4025,13 +4025,29 @@ void on_present_end(IDXGISwapChain* swapchain) {
                     XrSpace wrist = g_hudOnWrist.load(std::memory_order_relaxed)
                                         ? left_grip_space()
                                         : XR_NULL_HANDLE;
-                    if (wrist != XR_NULL_HANDLE) {
-                        // Like a watch on the left forearm: face up, 12 cm back
-                        // from the grip, its top edge away from you when the arm
-                        // is held across the chest.
-                        hudQuad.space = wrist;
-                        hudQuad.pose.orientation = {-0.5f, 0.5f, 0.5f, 0.5f};
-                        hudQuad.pose.position = {0.0f, 0.04f, 0.12f};
+                    XrSpaceLocation grip{XR_TYPE_SPACE_LOCATION};
+                    if (wrist != XR_NULL_HANDLE &&
+                        XR_SUCCEEDED(xrLocateSpace(wrist, g_space,
+                                                   g_frameState.predictedDisplayTime, &grip)) &&
+                        (grip.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) &&
+                        (grip.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
+                        // Like a watch on the left forearm: face up, 12 cm back from
+                        // the grip, its top edge away from you when the arm is held
+                        // across the chest. World pose, because the SteamVR shim only
+                        // places quads in the view or the base space.
+                        const XrQuaternionf& o = grip.pose.orientation;
+                        const float offset[3] = {0.0f, 0.04f, 0.12f};
+                        float moved[3];
+                        bvr::xrmath::quat_rotate(o.x, o.y, o.z, o.w, offset, moved);
+                        const float gripQ[4] = {o.x, o.y, o.z, o.w};
+                        const float faceUp[4] = {-0.5f, 0.5f, 0.5f, 0.5f};
+                        float q[4];
+                        bvr::xrmath::quat_mul(gripQ, faceUp, q);
+                        hudQuad.space = g_space;
+                        hudQuad.pose.orientation = {q[0], q[1], q[2], q[3]};
+                        hudQuad.pose.position = {grip.pose.position.x + moved[0],
+                                                 grip.pose.position.y + moved[1],
+                                                 grip.pose.position.z + moved[2]};
                         w = kHudWristWidthM;
                     }
                     hudQuad.size = {w, w * static_cast<float>(hd.Height) /
