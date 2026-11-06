@@ -3547,6 +3547,20 @@ Melee: tick 0x70BC0 passes the hit box pose to 0x70570 (thiscall, ret 0xC: colle
 extents) and the view to 0x6FAF0 (ret 0xC: collector, FVector*, FRotator*). Both are hooked to use the
 right hand's ray for the wrench. Hooks run live; whether hits land right needs the headset.
 
+Wrench swing speed: the hands play the swing through AActor natives, read from the static registration that
+fills the name table: PlayAnimationOnChannel 0x33A510, FlatEaseIn 0x33A740, InstantEaseIn 0x33A9D0, and the
+chain forms 0x33A5E0, 0x33A840, 0x33AAA0 (thiscall, FFrame&, result*, ret 8; result is the handle). Rate:
+`actor+0x3FC` SkeletonInstance vtable +0x70 (handle, float), as `execSetAnimationPlaybackRate` 0x339910 calls it.
+Simulator, swing gesture every 0.4 s: one swing per 2 s at rate 1, about 1 s at 2, 0.4 to 0.8 s at 3. Rate 4
+showed one completed swing in the run, so 3 is the default. Hits on a real enemy are unverified. The wrench's
+per-swing hit list is `+0x918` data, `+0x91C` count, read at 0x6FBA9.
+
+Enemy walk, from `execPickTarget` 0x21DD30: `pawn+0xFC` level, `+0x44` actors, `[0]` LevelInfo, `+0x7FC`
+controller list head, `+0x480` next, `+0x450` pawn, pawn location `+0x1D8`. Live: the Nexus test save lists
+BioshockAIController with SpawnedAtlas and SpawnedDeck1SecurityCamera, plus the player. Bullet magnetism uses
+it in `substitute`; six shots bent in the simulator onto the only reachable pawn. No hostile was present, and
+the line of sight check passed at 23 m with no way to confirm the path was clear.
+
 Use highlight: effect event `BecameUseFocus` on the actor. `TriggerEffectEvent` 0x19BF70 (thiscall, ret 0x30:
 FName event, other, material, FVector*, FRotator*, onOther, queryOnly, observer, FName tag, info), untrigger
 0x19C0B0 (FName event, FName tag). FName is 8 bytes, ctor 0x496D20 (wchar_t*, 2, 1). The effect holds until

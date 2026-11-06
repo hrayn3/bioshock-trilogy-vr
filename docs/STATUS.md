@@ -11874,3 +11874,11 @@ Later the same day. In the headset and accepted: wrist HUD with wheels and hints
 on surfaces, ammo flick, wheel flick. Built, simulator only: tremor smoothing rated by nobody yet, reload flick,
 free-hand grip telekinesis, melee hits from the hand. Open: alternate-eye starts at 36 before reaching 72, black
 boxes behind HUD vials, a custom HUD.
+
+2026-11-06 evening. Choppy play traced to the path, not the render: 8 minutes of play held 65+ fps in 478 of 485
+seconds with CPU 54% and GPU 48%, while ping to the Quest ran 10 ms with spikes to 73 ms and 14 lost seconds, over
+about 18 Mbps of video. The headset sits two wireless Deco hops from the wired PC. Telekinesis reach is 4 m. Swing
+cooldown is 150 ms and the swing animation plays at 3x (`vraim swingrate`). Invisible bullet magnetism is on at a
+6 degree cone (`vraim magnet on|off|<deg>|los|nolos`). Simulator only: the swing rate, and magnet shots against a
+non-hostile pawn. Next: confirm wrench hits and magnetism on real enemies, including the class filter for friends
+and corpses, and rerun the network test after the headset moves closer. Double ammo is not started.
