@@ -345,7 +345,8 @@ bool sweep_target(float pos[4]) {
 }
 
 // ---- minor telekinesis ------------------------------------------------------
-constexpr float kTkReachHk = 3.0f;  // 1.5 m
+constexpr float kTkReachHk = 4.0f;  // 2 m
+constexpr float kTkConeTan = 0.36f; // about 20 degrees off the hand's line
 float g_tkReachHk = kTkReachHk;     // `vrphys tk reach <m>`, a test lever
 uint64_t g_tkLogMs = 0;
 constexpr float kTkHoldHk = 0.7f;   // 35 cm in front of the hand
@@ -413,7 +414,8 @@ bool grabbable(void* body) {
     return v == kTkOk;
 }
 
-void tk_scan_island(void* island, const float hand[3], void** best, float* bestDist) {
+void tk_scan_island(void* island, const float hand[3], const float dir[3], void** best,
+                    float* bestOff) {
     __try {
         const uint8_t* o = static_cast<const uint8_t*>(island);
         for (uint32_t off = 0x08; off < 0x80; off += 4) {
@@ -428,8 +430,12 @@ void tk_scan_island(void* island, const float hand[3], void** best, float* bestD
                 if (!read_pos(data[i], p)) continue;
                 float d[3] = {p[0] - hand[0], p[1] - hand[1], p[2] - hand[2]};
                 float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-                if (dist < *bestDist && grabbable(data[i])) {
-                    *bestDist = dist;
+                float along = d[0] * dir[0] + d[1] * dir[1] + d[2] * dir[2];
+                if (dist > g_tkReachHk || along <= 0.0f) continue;
+                float off[3] = {d[0] - dir[0] * along, d[1] - dir[1] * along, d[2] - dir[2] * along};
+                float offTan = sqrtf(off[0] * off[0] + off[1] * off[1] + off[2] * off[2]) / along;
+                if (offTan < *bestOff && grabbable(data[i])) {
+                    *bestOff = offTan;
                     *best = data[i];
                 }
             }
@@ -439,16 +445,16 @@ void tk_scan_island(void* island, const float hand[3], void** best, float* bestD
     }
 }
 
-void* tk_find(const float hand[3]) {
+void* tk_find(const float hand[3], const float dir[3]) {
     void* best = nullptr;
-    float bestDist = g_tkReachHk;
+    float bestOff = kTkConeTan;
     __try {
         const uint8_t* w = static_cast<const uint8_t*>(g_world);
         const uint32_t arrays[2] = {kWorldActiveIslandsOffset, kWorldInactiveIslandsOffset};
         for (uint32_t arr : arrays) {
             void** islands = *reinterpret_cast<void** const*>(w + arr);
             int n = *reinterpret_cast<const int*>(w + arr + 4);
-            for (int i = 0; i < n && i < 512; ++i) tk_scan_island(islands[i], hand, &best, &bestDist);
+            for (int i = 0; i < n && i < 512; ++i) tk_scan_island(islands[i], hand, dir, &best, &bestOff);
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
     }
@@ -530,11 +536,11 @@ void telekinesis_tick(const float handUu[3], const float dir[3], bool grip) {
 
     if (!g_tkBody) {
         if (grip && !g_tkGripWas) {
-            g_tkBody = tk_find(hand);
+            g_tkBody = tk_find(hand, dir);
             if (g_tkBody) ++g_tkGrabs;
             BVR_LOG("[tk] grip: %s (ok %u self %u fixed %u noworld %u noactor %u player %u "
                     "heavy %u)",
-                    g_tkBody ? "got one" : "nothing in reach", g_tkRejects[kTkOk],
+                    g_tkBody ? "got one" : "nothing there", g_tkRejects[kTkOk],
                     g_tkRejects[kTkSelf], g_tkRejects[kTkFixed], g_tkRejects[kTkNoWorld],
                     g_tkRejects[kTkNoActor], g_tkRejects[kTkPlayer], g_tkRejects[kTkHeavy]);
             memset(g_tkRejects, 0, sizeof g_tkRejects);

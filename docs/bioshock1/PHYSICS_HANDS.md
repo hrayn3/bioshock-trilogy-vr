@@ -57,7 +57,7 @@ Addresses are in ENGINE_NOTES, "Havok on the GOG build".
 
 ## Minor telekinesis (2026-11-06)
 
-The grip on the free hand pulls the nearest loose body within 1.5 m and under 80 kg, hovers it 35 cm
+The grip on the free hand pulls the loose body it points at, within 2 m, 20 degrees of its line and 80 kg, hovers it 35 cm
 in front of that hand, and letting go throws it with the hand's motion. The grip stops being a bumper
 in gameplay; the trigger on that hand still switches to it. `vrphys tk [off|reach <m>]`.
 
