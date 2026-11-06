@@ -48,6 +48,9 @@ bool vr_gameplay_now();
 // The game layer says a plasmid is up, so a free right stick drives the plasmid wheel.
 void publish_plasmid_up(bool up);
 bool plasmid_up();
+// The game layer says a reloadable gun is up, so a sharp upward jerk of it reloads.
+void publish_reload_gate(bool armed);
+bool reload_gate();
 
 // Session 30. The pitch kill stops the stick fighting the HMD, but it also
 // freezes the ENGINE's own view pitch forever - and camera.cpp writes the

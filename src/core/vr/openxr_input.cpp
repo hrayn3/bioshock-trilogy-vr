@@ -162,6 +162,10 @@ XrAction g_aimR = XR_NULL_HANDLE;      // The runtime's own pointing ray; the gr
                                        // pose runs along the handle and reads
                                        // tens of degrees low as an aim vector.
 
+int64_t g_reloadLastT = 0;
+float g_reloadLastY = 0.0f;
+bool g_reloadArmed = true;
+uint64_t g_reloadCooldownMs = 0, g_reloadPulseUntilMs = 0;
 bool g_wheelHeld = false;
 float g_wheelX = 0.0f, g_wheelY = 0.0f;
 uint64_t g_wheelMinUntilMs = 0, g_wheelTailUntilMs = 0;
@@ -617,6 +621,40 @@ void input_sync(XrSession session, XrTime predictedDisplayTime) {
                                           static_cast<int64_t>(predictedDisplayTime));
     }
 
+    // Reload flick: the right hand jerked sharply upward, relative to the head so
+    // standing up or jumping does not count.
+    {
+        constexpr float kFlickUpMs = 2.6f, kRearmMs = 0.8f;
+        constexpr uint64_t kCooldownMs = 900, kPulseMs = 150;
+        float hand[3], handQ[4];
+        bvr::vr::HeadPose head{};
+        const bool ok = input_get_hand_pose(1, false, hand, handQ) &&
+                        bvr::vr::peek_head_pose(head);
+        const uint64_t nowMs = GetTickCount64();
+        const int64_t t = static_cast<int64_t>(predictedDisplayTime);
+        if (ok && g_reloadLastT) {
+            const float dt = static_cast<float>(t - g_reloadLastT) * 1e-9f;
+            if (dt > 0.004f && dt < 0.1f) {
+                const float rise = (hand[1] - head.py) - g_reloadLastY;
+                const float up = rise / dt;
+                if (up < kRearmMs) g_reloadArmed = true;
+                if (up >= kFlickUpMs && g_reloadArmed && nowMs >= g_reloadCooldownMs &&
+                    bvr::input::reload_gate()) {
+                    bool lb = false, rb = false;
+                    bvr::input::last_composed_bumpers(&lb, &rb);
+                    if (!lb && !rb) {
+                        g_reloadArmed = false;
+                        g_reloadCooldownMs = nowMs + kCooldownMs;
+                        g_reloadPulseUntilMs = nowMs + kPulseMs;
+                        BVR_LOG("xr-input: reload flick at %.1f m/s", up);
+                    }
+                }
+            }
+        }
+        g_reloadLastT = ok ? t : 0;
+        if (ok) g_reloadLastY = hand[1] - head.py;
+    }
+
     bvr::input::Gamepad pad{};
 
     float mx = 0.0f, my = 0.0f, lx = 0.0f, ly = 0.0f;
@@ -830,6 +868,7 @@ void input_sync(XrSession session, XrTime predictedDisplayTime) {
                 g_flickArmed = true;
         }
         if (now < g_flickPulseUntilMs) pad.buttons |= g_flickPulseBit;
+        if (now < g_reloadPulseUntilMs) pad.buttons |= XINPUT_GAMEPAD_X;
 
         // s50 (Infinite): the flourish chord - see the state block. The edge
         // requires the rest ALREADY touched at the press, so a plain jump

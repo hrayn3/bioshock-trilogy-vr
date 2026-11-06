@@ -1380,6 +1380,7 @@ void on_calcview(const FrameContext& ctx) {
     lc.hand = hands::active_hand();
     int lh = lc.hand == 0 ? 0 : 1;
     bvr::input::publish_plasmid_up(lh == 0);
+    bvr::input::publish_reload_gate(lh == 1 && g_gameplayView && !weapon_key_is("Wrench"));
     lc.pitchTrimDeg = g_pitchOffsetDeg[lh].load(std::memory_order_relaxed);
     lc.yawTrimDeg = g_yawOffsetDeg[lh].load(std::memory_order_relaxed);
     lc.posFwdCm = g_posFwdCm[lh].load(std::memory_order_relaxed);

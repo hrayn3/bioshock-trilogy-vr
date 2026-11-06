@@ -791,11 +791,23 @@ void last_composed_sticks(int16_t* lx, int16_t* ly, int16_t* rx, int16_t* ry) {
 
 namespace {
 std::atomic<bool> g_plasmidUp{false};
+std::atomic<bool> g_reloadGate{false};
+std::atomic<uint64_t> g_reloadGateMs{0};
 } // namespace
 
 void publish_plasmid_up(bool up) { g_plasmidUp.store(up, std::memory_order_relaxed); }
 
 bool plasmid_up() { return g_plasmidUp.load(std::memory_order_relaxed); }
+
+void publish_reload_gate(bool armed) {
+    g_reloadGate.store(armed, std::memory_order_relaxed);
+    g_reloadGateMs.store(GetTickCount64(), std::memory_order_relaxed);
+}
+
+bool reload_gate() {
+    return g_reloadGate.load(std::memory_order_relaxed) &&
+           GetTickCount64() - g_reloadGateMs.load(std::memory_order_relaxed) <= 500;
+}
 
 bool vr_gameplay_now() {
     return g_vrGameplay.load(std::memory_order_relaxed) &&
