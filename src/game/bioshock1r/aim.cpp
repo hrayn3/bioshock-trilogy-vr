@@ -1427,8 +1427,13 @@ void on_calcview(const FrameContext& ctx) {
         float distUu = kDotRangeM * ctx.worldScale;
         FVector end{dr.origin.x + dir[0] * distUu, dr.origin.y + dir[1] * distUu,
                     dr.origin.z + dir[2] * distUu};
+        // Clear of the hand, which can start inside something the check reports.
+        constexpr float kDotClearM = 0.3f;
+        float clearUu = kDotClearM * ctx.worldScale;
+        FVector start{dr.origin.x + dir[0] * clearUu, dr.origin.y + dir[1] * clearUu,
+                      dr.origin.z + dir[2] * clearUu};
         FVector at{};
-        if (surface_hit(dr.origin, end, &at)) {
+        if (surface_hit(start, end, &at)) {
             game_point_to_xr(ctx, at, dc.posXr);
             dc.valid = true;
         }

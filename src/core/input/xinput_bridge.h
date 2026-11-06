@@ -44,6 +44,7 @@ void last_xr_pad(Gamepad* pad, bool* active);
 // viewmodel and the melee phantom with it (session 19). Self-expires if
 // publishing stops, failing open to stock behavior.
 void publish_vr_gameplay(bool on);
+bool vr_gameplay_now();
 
 // Session 30. The pitch kill stops the stick fighting the HMD, but it also
 // freezes the ENGINE's own view pitch forever - and camera.cpp writes the
@@ -138,7 +139,9 @@ void set_snap_angle_deg(float d);
 // act as a no-button modifier. It must be the LEFT thumbrest, because your
 // right thumb cannot rest on the right thumbrest and push the right stick at
 // the same time. Default is Click - unchanged behaviour for existing users.
-enum class AmmoMod { Click = 0, Thumbrest = 1, Both = 2 };
+// Free: no modifier. In gameplay the right stick does not turn, and a flick
+// selects the slot directly.
+enum class AmmoMod { Click = 0, Thumbrest = 1, Both = 2, Free = 3 };
 AmmoMod ammo_mod();
 void set_ammo_mod(AmmoMod m);
 int take_snap_steps(); // +right/-left steps queued since the last drain

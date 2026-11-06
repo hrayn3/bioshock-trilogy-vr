@@ -758,7 +758,10 @@ void input_sync(XrSession session, XrTime predictedDisplayTime) {
             clickMod = (mode != bvr::input::AmmoMod::Thumbrest || noThumbrestYet) && rsClick;
             restMod = mode != bvr::input::AmmoMod::Click && restL;
         }
-        const bool modHeld = clickMod || restMod;
+        const bool freeMod = map.flickAmmoModPref &&
+                             bvr::input::ammo_mod() == bvr::input::AmmoMod::Free &&
+                             bvr::input::vr_gameplay_now();
+        const bool modHeld = clickMod || restMod || freeMod;
 
         if (modHeld && !g_rsClickWasDown) g_flickArmed = true;
         g_rsClickWasDown = modHeld;
@@ -771,7 +774,7 @@ void input_sync(XrSession session, XrTime predictedDisplayTime) {
             // past the select threshold.
             const bool pushed =
                 fabsf(rawX) >= kFlickPress || fabsf(rawY) >= kFlickPress;
-            if (clickMod || pushed) {
+            if (clickMod || freeMod || pushed) {
                 pad.rx = 0;
                 pad.ry = 0;
             }

@@ -789,6 +789,12 @@ void last_composed_sticks(int16_t* lx, int16_t* ly, int16_t* rx, int16_t* ry) {
     if (ry) *ry = g_lastComposed.ry;
 }
 
+bool vr_gameplay_now() {
+    return g_vrGameplay.load(std::memory_order_relaxed) &&
+           GetTickCount64() - g_vrGameplayLastMs.load(std::memory_order_relaxed) <=
+               kVrGameplayStaleMs;
+}
+
 AmmoMod ammo_mod() {
     return static_cast<AmmoMod>(g_ammoMod.load(std::memory_order_relaxed));
 }
@@ -942,11 +948,13 @@ void handle_command(const char* args) {
         if (strncmp(rest, "click", 5) == 0) set_ammo_mod(AmmoMod::Click);
         else if (strncmp(rest, "thumbrest", 9) == 0) set_ammo_mod(AmmoMod::Thumbrest);
         else if (strncmp(rest, "both", 4) == 0) set_ammo_mod(AmmoMod::Both);
+        else if (strncmp(rest, "free", 4) == 0) set_ammo_mod(AmmoMod::Free);
         const AmmoMod m = ammo_mod();
-        BVR_LOG("input: ammo modifier = %s (vrinput ammomod click|thumbrest|both) - "
+        BVR_LOG("input: ammo modifier = %s (vrinput ammomod click|thumbrest|both|free) - "
                 "thumbrest is the LEFT one; the right stick still picks the slot",
                 m == AmmoMod::Click       ? "CLICK (hold right stick click)"
                 : m == AmmoMod::Thumbrest ? "THUMBREST (rest left thumb)"
+                : m == AmmoMod::Free      ? "NONE (flick the stick, no turning)"
                                           : "BOTH (either)");
     } else if (strcmp(verb, "swing") == 0) {
         bvr::input::swing::handle_command(rest); // logs its own echoes
@@ -1069,8 +1077,8 @@ void draw_debug_ui() {
     // default; "Both" exists for controllers whose runtime reports no
     // thumbrest at all (Pico, some SteamVR setups) - see xinput_bridge.h.
     int am = g_ammoMod.load(std::memory_order_relaxed);
-    const char* amNames[] = {"Right-stick click", "Left thumbrest", "Either"};
-    if (ImGui::Combo("Ammo-select modifier", &am, amNames, 3))
+    const char* amNames[] = {"Right-stick click", "Left thumbrest", "Either", "None, flick the stick"};
+    if (ImGui::Combo("Ammo-select modifier", &am, amNames, 4))
         set_ammo_mod(static_cast<AmmoMod>(am));
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Hold this, then push the RIGHT stick up/down/left to pick an "

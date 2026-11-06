@@ -978,6 +978,8 @@ void apply_vr_preset() {
     hands::handle_command("pose aim"); // align to the AIM ray
     body::handle_command("on");        // M7.5: stick-forward = look direction
     load_vr_preset_values();           // tuned sliders (ini) over defaults
+    // Hugh, 2026-11-06: turning is the head and body, so the stick flicks ammo.
+    bvr::input::set_ammo_mod(bvr::input::AmmoMod::Free);
     aim::note_preset_baseline();       // seed source for new weapon profiles
     aim::reapply_weapon_profile();     // the active weapon profile beats the baseline
     // Alternate-eye holds 72 in the headset, where the stereo pair sits at 36 with
