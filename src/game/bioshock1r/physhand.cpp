@@ -346,6 +346,8 @@ bool sweep_target(float pos[4]) {
 
 // ---- minor telekinesis ------------------------------------------------------
 constexpr float kTkReachHk = 3.0f;  // 1.5 m
+float g_tkReachHk = kTkReachHk;     // `vrphys tk reach <m>`, a test lever
+uint64_t g_tkLogMs = 0;
 constexpr float kTkHoldHk = 0.7f;   // 35 cm in front of the hand
 constexpr float kTkGain = 14.0f;    // per second, of the gap to the hold point
 constexpr float kTkMaxSpeedHk = 30.0f;
@@ -434,7 +436,7 @@ void tk_scan_island(void* island, const float hand[3], void** best, float* bestD
 
 void* tk_find(const float hand[3]) {
     void* best = nullptr;
-    float bestDist = kTkReachHk;
+    float bestDist = g_tkReachHk;
     __try {
         const uint8_t* w = static_cast<const uint8_t*>(g_world);
         const uint32_t arrays[2] = {kWorldActiveIslandsOffset, kWorldInactiveIslandsOffset};
@@ -552,6 +554,12 @@ void telekinesis_tick(const float handUu[3], const float dir[3], bool grip) {
             } __except (EXCEPTION_EXECUTE_HANDLER) {
             }
             for (int i = 0; i < 3; ++i) spin[i] *= kTkSpinKeep;
+            if (now - g_tkLogMs >= 1000) {
+                g_tkLogMs = now;
+                float gap[3] = {hand[0] - p[0], hand[1] - p[1], hand[2] - p[2]};
+                BVR_LOG("[tk] holding, %.2f m from the hand",
+                        sqrtf(gap[0] * gap[0] + gap[1] * gap[1] + gap[2] * gap[2]) * 0.5f);
+            }
             if (!tk_drive(g_tkBody, vel, spin)) {
                 BVR_LOG("[tk] drive faulted, letting go");
                 g_tkBody = nullptr;
@@ -693,6 +701,9 @@ void handle_command(const char* args) {
         g_builtKey.clear();
         BVR_LOG("[phys] off");
     } else if (strncmp(args, "tk", 2) == 0) {
+        float reachM = 0.0f;
+        if (const char* r = strstr(args, "reach")) sscanf_s(r + 5, "%f", &reachM);
+        if (reachM > 0.0f) g_tkReachHk = reachM * kHkPerMetre;
         g_tkEnabled.store(strstr(args, "off") == nullptr, std::memory_order_relaxed);
         BVR_LOG("[tk] %s, %u grabs, holding %p",
                 g_tkEnabled.load(std::memory_order_relaxed) ? "on" : "off", g_tkGrabs, g_tkBody);
