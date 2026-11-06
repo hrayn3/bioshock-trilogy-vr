@@ -14,6 +14,7 @@
 #include "game/bioshock1r/aim.h"
 
 #include "core/gfx/hud_capture.h"
+#include "core/input/swing.h"
 #include "core/input/xinput_bridge.h"
 #include "core/util/log.h"
 #include "core/vr/openxr_runtime.h"
@@ -212,7 +213,65 @@ void __fastcall MeleeViewDetour(void* self, void* edx, void* collector, void* ca
     g_origMeleeView(self, edx, collector, &o, &r);
 }
 
+// Faster wrench. The swing animation plays through AActor's PlayAnimationOnChannel
+// natives; the hit samples and the script's wait both follow the animation, so its
+// playback rate is the swing speed. Applied to the hands' animation just after a
+// swing fired, so equips and idles keep their own speed.
+std::atomic<float> g_swingRate{2.0f};
+std::atomic<uint32_t> g_swingPlays{0};
+std::atomic<uint32_t> g_swingRated{0};
+constexpr uint64_t kSwingRateWindowMs = 350;
+constexpr int kPlayNatives = 6;
+using PlayNativeFn = void(__fastcall*)(void* self, void*, void* stack, void* result);
+PlayNativeFn g_origPlay[kPlayNatives] = {};
+
+void rate_swing_anim(void* self, void* result) {
+    __try {
+        if (self != hands::hands_actor() || !result) return;
+        g_swingPlays.fetch_add(1, std::memory_order_relaxed);
+        float rate = g_swingRate.load(std::memory_order_relaxed);
+        uint64_t fired = bvr::input::swing::last_fire_ms();
+        if (rate == 1.0f || !melee_gate() || !fired ||
+            GetTickCount64() - fired > kSwingRateWindowMs)
+            return;
+        void* skel = *reinterpret_cast<void**>(static_cast<uint8_t*>(self) +
+                                               patterns::kActorSkeletonOffset);
+        int handle = *static_cast<int*>(result);
+        if (!skel || !handle) return;
+        void* set = (*reinterpret_cast<void***>(skel))[patterns::kSkelSetRateVt / 4];
+        reinterpret_cast<unsigned char(__fastcall*)(void*, void*, int, float)>(set)(skel, nullptr,
+                                                                                    handle, rate);
+        g_swingRated.fetch_add(1, std::memory_order_relaxed);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    }
+}
+
+template <int N>
+void __fastcall PlayNativeDetour(void* self, void* edx, void* stack, void* result) {
+    g_origPlay[N](self, edx, stack, result);
+    rate_swing_anim(self, result);
+}
+
+void install_swing_rate_hooks(const uint8_t* base) {
+    const uint32_t rvas[kPlayNatives] = {
+        patterns::kPlayAnimOnChannelRva,    patterns::kPlayAnimFlatEaseRva,
+        patterns::kPlayAnimInstantEaseRva,  patterns::kPlayChainOnChannelRva,
+        patterns::kPlayChainFlatEaseRva,    patterns::kPlayChainInstantEaseRva};
+    void* const detours[kPlayNatives] = {
+        reinterpret_cast<void*>(&PlayNativeDetour<0>), reinterpret_cast<void*>(&PlayNativeDetour<1>),
+        reinterpret_cast<void*>(&PlayNativeDetour<2>), reinterpret_cast<void*>(&PlayNativeDetour<3>),
+        reinterpret_cast<void*>(&PlayNativeDetour<4>), reinterpret_cast<void*>(&PlayNativeDetour<5>)};
+    bool ok = true;
+    for (int i = 0; i < kPlayNatives && rvas[i]; ++i) {
+        void* target = const_cast<uint8_t*>(base) + rvas[i];
+        ok = ok && MH_CreateHook(target, detours[i], reinterpret_cast<void**>(&g_origPlay[i])) == MH_OK &&
+             MH_EnableHook(target) == MH_OK;
+    }
+    BVR_LOG("[aim] swing rate: hooks %s", ok ? "live" : "FAILED");
+}
+
 void install_melee_hooks(const uint8_t* base) {
+    install_swing_rate_hooks(base);
     if (!patterns::kMeleePoseRva || !patterns::kMeleeViewRva) return;
     void* pose = const_cast<uint8_t*>(base) + patterns::kMeleePoseRva;
     void* view = const_cast<uint8_t*>(base) + patterns::kMeleeViewRva;
@@ -360,6 +419,141 @@ bool surface_hit(const FVector& start, const FVector& end, FVector* at, void** a
         !read_ptr(static_cast<uint8_t*>(pawn) + patterns::kActorLevelOffset, &level) || !level)
         return false;
     return line_check_raw(level, pawn, start, end, at, actor);
+}
+
+// ---- bullet magnetism --------------------------------------------------------
+// Invisible help: the shot bends to the closest point of a live enemy's body that
+// sits inside a small cone around the hand's ray. Nothing is drawn, and aim outside
+// the cone is untouched. The enemy walk is the one AController::PickTarget does.
+std::atomic<bool> g_magnet{true};
+std::atomic<float> g_magnetDeg{6.0f};
+std::atomic<uint32_t> g_magnetBends{0};
+constexpr float kMagnetRangeUu = 3000.0f;
+constexpr float kMagnetBodyLowUu = 30.0f;  // below the pawn's origin
+constexpr float kMagnetBodyHighUu = 45.0f; // above it
+
+void* player_pawn() {
+    void* hold = nullptr;
+    void* pawn = nullptr;
+    if (!hands::current_holdable(&hold) || !hold ||
+        !read_ptr(static_cast<uint8_t*>(hold) + patterns::kWeaponOwnerOffset, &pawn))
+        return nullptr;
+    return pawn;
+}
+
+void* controller_list(void* pawn) {
+    void* level = nullptr;
+    void* actors = nullptr;
+    void* info = nullptr;
+    void* head = nullptr;
+    if (!read_ptr(static_cast<uint8_t*>(pawn) + patterns::kActorLevelOffset, &level) || !level ||
+        !read_ptr(static_cast<uint8_t*>(level) + patterns::kLevelActorsOffset, &actors) || !actors ||
+        !read_ptr(actors, &info) || !info ||
+        !read_ptr(static_cast<uint8_t*>(info) + patterns::kLevelInfoControllerListOffset, &head))
+        return nullptr;
+    return head;
+}
+
+// Friend or foe. Friendly bots and the Little Sisters are never targets.
+bool magnet_target_class(const wchar_t* cls) {
+    return cls && !wcsstr(cls, L"LittleSister") && !wcsstr(cls, L"Friendly") &&
+           !wcsstr(cls, L"PlayerController");
+}
+
+// Bends `r` when an enemy qualifies. Returns the enemy, or nullptr for no change.
+void* magnet_bend(const FVector& o, FRotator* r, float* offDeg) {
+    if (!g_magnet.load(std::memory_order_relaxed)) return nullptr;
+    void* me = player_pawn();
+    if (!me) return nullptr;
+    float dir[3];
+    ue_rot_to_dir(*r, dir);
+    float limit = g_magnetDeg.load(std::memory_order_relaxed) * 3.14159265f / 180.0f;
+    float bestCos = cosf(limit);
+    void* best = nullptr;
+    FVector bestAt{};
+    void* c = controller_list(me);
+    for (int guard = 0; c && guard < 256; ++guard) {
+        void* next = nullptr;
+        void* pawn = nullptr;
+        read_ptr(static_cast<uint8_t*>(c) + patterns::kControllerNextOffset, &next);
+        read_ptr(static_cast<uint8_t*>(c) + patterns::kControllerPawnOffset, &pawn);
+        float loc[3];
+        if (pawn && pawn != me && magnet_target_class(patterns::object_class_name(pawn)) &&
+            read12(static_cast<uint8_t*>(pawn) + patterns::kActorLocationOffset, loc)) {
+            // Closest point of the body's upright line to the ray, so a head shot
+            // stays a head shot.
+            float dx = loc[0] - o.x, dy = loc[1] - o.y;
+            float along = dx * dir[0] + dy * dir[1] + (loc[2] - o.z) * dir[2];
+            float z = o.z + dir[2] * along;
+            float low = loc[2] - kMagnetBodyLowUu, high = loc[2] + kMagnetBodyHighUu;
+            z = z < low ? low : (z > high ? high : z);
+            float v[3] = {dx, dy, z - o.z};
+            float len = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+            if (len > 1.0f && len < kMagnetRangeUu) {
+                float cosOff = (v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2]) / len;
+                if (cosOff > bestCos) {
+                    FVector at{o.x + v[0], o.y + v[1], o.z + v[2]};
+                    FVector hit{};
+                    void* hitActor = nullptr;
+                    bool blocked = surface_hit(o, at, &hit, &hitActor) && hitActor != pawn;
+                    if (blocked) {
+                        float hx = hit.x - o.x, hy = hit.y - o.y, hz = hit.z - o.z;
+                        blocked = sqrtf(hx * hx + hy * hy + hz * hz) < len - 60.0f;
+                    }
+                    if (!blocked) {
+                        bestCos = cosOff;
+                        best = pawn;
+                        bestAt = at;
+                    }
+                }
+            }
+        }
+        c = next;
+    }
+    if (!best) return nullptr;
+    float d[3] = {bestAt.x - o.x, bestAt.y - o.y, bestAt.z - o.z};
+    float len = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    for (float& f : d) f /= len;
+    FRotator bent = ue_dir_to_rot(d);
+    r->pitch = bent.pitch;
+    r->yaw = bent.yaw;
+    if (offDeg) *offDeg = acosf(bestCos > 1.0f ? 1.0f : bestCos) * 180.0f / 3.14159265f;
+    return best;
+}
+
+void magnet_list(const FVector& o, const FRotator& r) {
+    void* me = player_pawn();
+    if (!me) {
+        BVR_LOG("[magnet] no player pawn");
+        return;
+    }
+    float dir[3];
+    ue_rot_to_dir(r, dir);
+    int n = 0;
+    void* c = controller_list(me);
+    for (int guard = 0; c && guard < 256; ++guard, ++n) {
+        void* next = nullptr;
+        void* pawn = nullptr;
+        read_ptr(static_cast<uint8_t*>(c) + patterns::kControllerNextOffset, &next);
+        read_ptr(static_cast<uint8_t*>(c) + patterns::kControllerPawnOffset, &pawn);
+        float loc[3] = {};
+        const wchar_t* cCls = patterns::object_class_name(c);
+        const wchar_t* pCls = pawn ? patterns::object_class_name(pawn) : nullptr;
+        float offDeg = -1.0f, dist = 0.0f;
+        if (pawn && read12(static_cast<uint8_t*>(pawn) + patterns::kActorLocationOffset, loc)) {
+            float v[3] = {loc[0] - o.x, loc[1] - o.y, loc[2] - o.z};
+            dist = sqrtf(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+            if (dist > 1.0f)
+                offDeg = acosf((v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2]) / dist) * 180.0f /
+                         3.14159265f;
+        }
+        BVR_LOG("[magnet] #%d ctrl=%ls pawn=%ls %p at %.0f %.0f %.0f dist %.0f off %.1f deg%s", n,
+                cCls ? cCls : L"?", pCls ? pCls : L"-", pawn, loc[0], loc[1], loc[2], dist, offDeg,
+                pawn == me ? " (player)" : "");
+        c = next;
+    }
+    BVR_LOG("[magnet] %s, cone %.1f deg, %d controllers, %u bends",
+            g_magnet.load() ? "on" : "off", g_magnetDeg.load(), n, g_magnetBends.load());
 }
 
 // ---- ownership gates -------------------------------------------------------
@@ -598,6 +792,14 @@ bool substitute(Slot& slot, Hand h, float* const* out, int count) {
     if (!ray_for(h, &o, &r)) {
         slot.skips.fetch_add(1, std::memory_order_relaxed);
         return false;
+    }
+    float bentDeg = 0.0f;
+    if (void* target = magnet_bend(o, &r, &bentDeg)) {
+        uint32_t n = g_magnetBends.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (n <= 40 || n % 50 == 0) {
+            const wchar_t* cls = patterns::object_class_name(target);
+            BVR_LOG("[magnet] bend #%u %.1f deg onto %ls", n, bentDeg, cls ? cls : L"?");
+        }
     }
     float dir[3];
     ue_rot_to_dir(r, dir);
@@ -1546,7 +1748,7 @@ void on_calcview(const FrameContext& ctx) {
             ue_rot_to_dir(fr.rot, frDir);
             const float frPos[3] = {fr.origin.x, fr.origin.y, fr.origin.z};
             // What the hand's ray actually touches outranks the cone around it.
-            constexpr float kGrabRangeM = 2.0f;
+            constexpr float kGrabRangeM = 4.0f;
             float rangeUu = kGrabRangeM * ctx.worldScale;
             FVector rayEnd{fr.origin.x + frDir[0] * rangeUu, fr.origin.y + frDir[1] * rangeUu,
                            fr.origin.z + frDir[2] * rangeUu};
@@ -1675,6 +1877,19 @@ void handle_command(const char* args) {
         g_enabled.store(false, std::memory_order_relaxed);
         if (!g_probe.load(std::memory_order_relaxed)) disable_all();
         BVR_LOG("[aim] OFF - engine aim restored");
+    } else if (strcmp(verb, "magnet") == 0) {
+        char arg[16] = {};
+        sscanf_s(rest, "%15s", arg, static_cast<unsigned>(sizeof arg));
+        float deg = 0.0f;
+        if (strcmp(arg, "on") == 0) g_magnet.store(true);
+        else if (strcmp(arg, "off") == 0) g_magnet.store(false);
+        else if (sscanf_s(arg, "%f", &deg) == 1 && deg > 0.0f) g_magnetDeg.store(deg);
+        magnet_list(g_ray[1].origin, g_ray[1].rot);
+    } else if (strcmp(verb, "swingrate") == 0) {
+        float rate = 0.0f;
+        if (sscanf_s(rest, "%f", &rate) == 1 && rate > 0.0f) g_swingRate.store(rate);
+        BVR_LOG("[aim] swing rate x%.2f, hands plays %u, rated %u", g_swingRate.load(),
+                g_swingPlays.load(), g_swingRated.load());
     } else if (strcmp(verb, "scan") == 0) {
         char cls[48] = {}, fn[48] = {};
         int dump = 8;

@@ -148,6 +148,12 @@ void apply_gog_addresses() {
     kHkGetMassRva = 0x6D0300;
     kMeleePoseRva = 0x70570;
     kMeleeViewRva = 0x6FAF0;
+    kPlayAnimOnChannelRva = 0x33A510;
+    kPlayAnimFlatEaseRva = 0x33A740;
+    kPlayAnimInstantEaseRva = 0x33A9D0;
+    kPlayChainOnChannelRva = 0x33A5E0;
+    kPlayChainFlatEaseRva = 0x33A840;
+    kPlayChainInstantEaseRva = 0x33AAA0;
     kHkTlsSlotRva = 0x117EC84;
     kHkRemoveRefRva = 0x60E630;
     kHkCapsuleCtorRva = 0x7F6B20;

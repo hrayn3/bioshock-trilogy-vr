@@ -39,7 +39,7 @@ constexpr double kMaxDtMs = 100.0;
 // across two ticks; flat-measured, 120 ms does fire the weapon.
 constexpr float kDefaultThreshold = 3.6f; // m/s, hand speed that counts as a swing
 constexpr float kDefaultRearm = 1.0f;     // m/s, must fall below this to re-arm
-constexpr uint32_t kDefaultCooldownMs = 300;
+constexpr uint32_t kDefaultCooldownMs = 150;
 constexpr uint32_t kDefaultPulseMs = 120;
 constexpr uint32_t kDefaultDelayMs = 0;
 
@@ -322,6 +322,7 @@ void set_threshold_ms(float v) { g_threshold.store(clampf(v, 0.3f, 10.0f), std::
 float rearm_ms() { return g_rearm.load(std::memory_order_relaxed); }
 void set_rearm_ms(float v) { g_rearm.store(clampf(v, 0.05f, 9.0f), std::memory_order_relaxed); }
 uint32_t cooldown_ms() { return g_cooldownMs.load(std::memory_order_relaxed); }
+uint64_t last_fire_ms() { return g_lastFireMs.load(std::memory_order_relaxed); }
 void set_cooldown_ms(uint32_t v) { g_cooldownMs.store(clampu(v, 0, 2000), std::memory_order_relaxed); }
 uint32_t pulse_ms() { return g_pulseMs.load(std::memory_order_relaxed); }
 void set_pulse_ms(uint32_t v) { g_pulseMs.store(clampu(v, 20, 500), std::memory_order_relaxed); }

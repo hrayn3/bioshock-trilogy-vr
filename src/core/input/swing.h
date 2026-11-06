@@ -84,6 +84,7 @@ void set_threshold_ms(float v);
 float rearm_ms();
 void set_rearm_ms(float v);
 uint32_t cooldown_ms();
+uint64_t last_fire_ms();
 void set_cooldown_ms(uint32_t v);
 uint32_t pulse_ms();
 void set_pulse_ms(uint32_t v);

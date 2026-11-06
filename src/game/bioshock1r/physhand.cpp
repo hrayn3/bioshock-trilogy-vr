@@ -345,7 +345,7 @@ bool sweep_target(float pos[4]) {
 }
 
 // ---- minor telekinesis ------------------------------------------------------
-constexpr float kTkReachHk = 4.0f;  // 2 m
+constexpr float kTkReachHk = 8.0f;  // 4 m
 constexpr float kTkConeTan = 0.36f; // about 20 degrees off the hand's line
 float g_tkReachHk = kTkReachHk;     // `vrphys tk reach <m>`, a test lever
 uint64_t g_tkLogMs = 0;
