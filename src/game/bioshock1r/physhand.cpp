@@ -412,6 +412,51 @@ TkReject grab_verdict(void* body) {
     return kTkOk;
 }
 
+// The game's own use highlight: an effect event on the actor that stays on until
+// it is untriggered, so it is switched when the target changes, not per frame.
+struct EngineName {
+    uint32_t index = 0, number = 0;
+};
+using NameCtorFn = void(__fastcall*)(EngineName* self, void*, const wchar_t* text, int find, int number);
+using TriggerFn = void*(__fastcall*)(void* actor, void*, uint32_t nameIdx, uint32_t nameNum, void* other,
+                                     void* material, const float* loc, const int* rot, int onOther,
+                                     int queryOnly, void* observer, uint32_t tagIdx, uint32_t tagNum,
+                                     void* info);
+using UntriggerFn = void(__fastcall*)(void* actor, void*, uint32_t nameIdx, uint32_t nameNum,
+                                      uint32_t tagIdx, uint32_t tagNum);
+EngineName g_focusEvent;
+void* g_glowActor = nullptr;
+std::atomic<bool> g_glowOn{true};
+
+bool glow_set(void* actor, bool on) {
+    __try {
+        if (!g_focusEvent.index)
+            fn<NameCtorFn>(patterns::kFNameCtorRva)(&g_focusEvent, nullptr, L"BecameUseFocus", 2, 1);
+        if (on) {
+            const float zero[3] = {};
+            const int rot[3] = {};
+            fn<TriggerFn>(patterns::kActorTriggerEffectRva)(actor, nullptr, g_focusEvent.index,
+                                                            g_focusEvent.number, nullptr, nullptr, zero,
+                                                            rot, 0, 0, nullptr, 0, 0, nullptr);
+        } else {
+            fn<UntriggerFn>(patterns::kActorUntriggerEffectRva)(actor, nullptr, g_focusEvent.index,
+                                                                g_focusEvent.number, 0, 0);
+        }
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        g_glowOn.store(false, std::memory_order_relaxed);
+        BVR_LOG("[tk] glow faulted, off for this session");
+        return false;
+    }
+}
+
+void glow_follow(void* actor) {
+    if (actor == g_glowActor || !g_glowOn.load(std::memory_order_relaxed)) return;
+    if (g_glowActor) glow_set(g_glowActor, false);
+    g_glowActor = actor;
+    if (actor) glow_set(actor, true);
+}
+
 bool grabbable(void* body) {
     TkReject v = grab_verdict(body);
     ++g_tkRejects[v];
@@ -512,6 +557,7 @@ void on_world_change() {
     g_havok = nullptr;
     g_tkBody = nullptr;
     g_tkAim = nullptr;
+    g_glowActor = nullptr; // gone with the level
     g_builtKey.clear();
     g_trackedCount = 0;
     g_sweep.index = -1;
@@ -546,6 +592,7 @@ void telekinesis_tick(const float handUu[3], const float dir[3], bool grip, void
         g_tkAim = tk_find(hand, dir);
     }
     if (g_tkBody) g_tkAim = nullptr;
+    glow_follow(g_tkAim ? body_actor(g_tkAim) : nullptr);
 
     if (!g_tkBody) {
         if (grip && !g_tkGripWas) {
@@ -736,6 +783,15 @@ void handle_command(const char* args) {
         }
         g_builtKey.clear();
         BVR_LOG("[phys] off");
+    } else if (strncmp(args, "tk glow", 7) == 0) {
+        // Test: the last near scan's first body, on then off, to prove the calls.
+        void* actor = g_trackedCount ? body_actor(g_tracked[0].body) : nullptr;
+        BVR_LOG("[tk] glow test on actor %p", actor);
+        if (actor && glow_set(actor, true)) {
+            Sleep(50);
+            glow_set(actor, false);
+            BVR_LOG("[tk] glow test done, name %u/%u", g_focusEvent.index, g_focusEvent.number);
+        }
     } else if (strncmp(args, "tk", 2) == 0) {
         float reachM = 0.0f;
         if (const char* r = strstr(args, "reach")) sscanf_s(r + 5, "%f", &reachM);

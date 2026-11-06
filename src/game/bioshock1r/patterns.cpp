@@ -142,6 +142,9 @@ void apply_gog_addresses() {
     kXInputSetStateIatRva = 0xBC6A80;
     kLineCheckVtblOffset = 0x168;
     kHkActivateRva = 0x6C04C0;
+    kActorTriggerEffectRva = 0x19BF70;
+    kActorUntriggerEffectRva = 0x19C0B0;
+    kFNameCtorRva = 0x496D20;
     kHkGetMassRva = 0x6D0300;
     kMeleePoseRva = 0x70570;
     kMeleeViewRva = 0x6FAF0;
