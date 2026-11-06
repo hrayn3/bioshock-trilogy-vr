@@ -368,6 +368,9 @@ float g_tkHandVel[3] = {};
 bool g_tkHaveHand = false;
 std::atomic<bool> g_tkEnabled{true};
 uint32_t g_tkGrabs = 0;
+void* g_tkAim = nullptr; // what the grip would take right now
+uint64_t g_tkAimMs = 0;
+constexpr uint64_t kTkAimMs = 100;
 
 void* body_actor(void* body) {
     __try {
@@ -506,6 +509,7 @@ void on_world_change() {
     g_world = nullptr;
     g_havok = nullptr;
     g_tkBody = nullptr;
+    g_tkAim = nullptr;
     g_builtKey.clear();
     g_trackedCount = 0;
     g_sweep.index = -1;
@@ -533,6 +537,12 @@ void telekinesis_tick(const float handUu[3], const float dir[3], bool grip) {
     }
     memcpy(g_tkHandLast, hand, sizeof g_tkHandLast);
     g_tkHaveHand = true;
+
+    if (!g_tkBody && now - g_tkAimMs >= kTkAimMs) {
+        g_tkAimMs = now;
+        g_tkAim = tk_find(hand, dir);
+    }
+    if (g_tkBody) g_tkAim = nullptr;
 
     if (!g_tkBody) {
         if (grip && !g_tkGripWas) {
@@ -583,6 +593,13 @@ void telekinesis_tick(const float handUu[3], const float dir[3], bool grip) {
         }
     }
     g_tkGripWas = grip;
+}
+
+bool telekinesis_target(float uu[3]) {
+    float p[3];
+    if (!g_tkAim || !vtable_is(g_tkAim, kBodyVtableRva) || !read_pos(g_tkAim, p)) return false;
+    for (int i = 0; i < 3; ++i) uu[i] = p[i] / kHkPerUu;
+    return true;
 }
 
 void on_frame(const GamePose& gp, int hand) {

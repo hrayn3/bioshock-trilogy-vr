@@ -16,6 +16,8 @@ void on_frame(const GamePose& gp, int hand);
 // with the hand's motion. Copies the game's own Telekinesis hold, without the
 // listener that makes thrown props hurt.
 void telekinesis_tick(const float handUu[3], const float dir[3], bool grip);
+// Where the object the grip would take sits, in UU. False when there is none.
+bool telekinesis_target(float uu[3]);
 void handle_command(const char* args);
 
 } // namespace bvr::b1r::physhand

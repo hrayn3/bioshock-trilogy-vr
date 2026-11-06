@@ -1545,6 +1545,16 @@ void on_calcview(const FrameContext& ctx) {
             const float frPos[3] = {fr.origin.x, fr.origin.y, fr.origin.z};
             physhand::telekinesis_tick(frPos, frDir, bvr::input::free_grip_held());
         }
+        bvr::vr::AimDotConfig mark{};
+        mark.enabled = true;
+        mark.sizeDeg = 1.2f;
+        float targetUu[3];
+        if (g_gameplayView && physhand::telekinesis_target(targetUu)) {
+            FVector t{targetUu[0], targetUu[1], targetUu[2]};
+            game_point_to_xr(ctx, t, mark.posXr);
+            mark.valid = true;
+        }
+        bvr::vr::set_aim_dot_slot(1, mark);
     }
 }
 
