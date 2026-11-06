@@ -142,7 +142,7 @@ std::atomic<float> g_laserNearM{0.30f}, g_laserFarM{6.0f}, g_laserSizeDeg{0.7f};
 // wall only fuse in stereo at matching depth, so the calibration flow is "set
 // the distance to the wall, fire, nudge the trim until the dot sits on the
 // hole". BioVRDev's dot has the same shape and the same limitation.
-std::atomic<bool> g_dot{false};
+std::atomic<bool> g_dot{true};
 std::atomic<float> g_dotDistM{5.0f};
 std::atomic<float> g_dotSizeDeg{0.5f};
 constexpr float kIdentQuat[4] = {0.0f, 0.0f, 0.0f, 1.0f};
@@ -246,6 +246,49 @@ bool read_ptr(const void* src, void** out) {
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         return false;
     }
+}
+
+using LineCheckFn = int(__fastcall*)(void* level, void*, void* hit, void* source, const FVector* end,
+                                     const FVector* start, uint32_t flags, const FVector* extent,
+                                     uint32_t zero);
+
+bool line_check_raw(void* level, void* pawn, const FVector& start, const FVector& end, FVector* at) {
+    __try {
+        void** vtbl = *static_cast<void***>(level);
+        auto check = reinterpret_cast<LineCheckFn>(vtbl[patterns::kLineCheckVtblOffset / 4]);
+        alignas(4) uint8_t hit[patterns::kCheckResultBytes] = {};
+        *reinterpret_cast<float*>(hit + patterns::kCheckResultTimeOffset) = 1.0f;
+        *reinterpret_cast<int*>(hit + patterns::kCheckResultItemOffset) = -1;
+        const FVector zeroExtent{};
+        int clear = check(level, nullptr, hit, pawn, &end, &start, patterns::kLineCheckFlags,
+                          &zeroExtent, 0);
+        if (clear != 0 || !*reinterpret_cast<void**>(hit + patterns::kCheckResultActorOffset))
+            return false;
+        memcpy(at, hit + patterns::kCheckResultLocationOffset, sizeof(FVector));
+        return true;
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
+// First surface on the ray, skipping the player. Game thread only.
+bool surface_hit(const FVector& start, const FVector& end, FVector* at) {
+    if (!patterns::kLineCheckVtblOffset) return false;
+    void* hold = nullptr;
+    void* pawn = nullptr;
+    void* level = nullptr;
+    if (!hands::current_holdable(&hold) || !hold ||
+        !read_ptr(static_cast<uint8_t*>(hold) + patterns::kWeaponOwnerOffset, &pawn) || !pawn ||
+        !read_ptr(static_cast<uint8_t*>(pawn) + patterns::kActorLevelOffset, &level) || !level)
+        return false;
+    bool hit = line_check_raw(level, pawn, start, end, at);
+    static int s_logs = 0;
+    if (hit && s_logs < 6) {
+        ++s_logs;
+        float dx = at->x - start.x, dy = at->y - start.y, dz = at->z - start.z;
+        BVR_LOG("[aim] plasmid dot on a surface %.0f UU away", sqrtf(dx * dx + dy * dy + dz * dz));
+    }
+    return hit;
 }
 
 // ---- ownership gates -------------------------------------------------------
@@ -1376,14 +1419,19 @@ void on_calcview(const FrameContext& ctx) {
     dc.enabled = g_dot.load(std::memory_order_relaxed);
     dc.sizeDeg = g_dotSizeDeg.load(std::memory_order_relaxed);
     const Ray& dr = g_ray[lh];
-    if (dc.enabled && g_enabled.load(std::memory_order_relaxed) && g_gameplayView && dr.valid) {
+    if (dc.enabled && lh == 0 && g_enabled.load(std::memory_order_relaxed) && g_gameplayView &&
+        dr.valid) {
         float dir[3];
         ue_rot_to_dir(dr.rot, dir);
-        float distUu = g_dotDistM.load(std::memory_order_relaxed) * ctx.worldScale;
-        FVector at{dr.origin.x + dir[0] * distUu, dr.origin.y + dir[1] * distUu,
-                   dr.origin.z + dir[2] * distUu};
-        game_point_to_xr(ctx, at, dc.posXr);
-        dc.valid = true;
+        constexpr float kDotRangeM = 40.0f;
+        float distUu = kDotRangeM * ctx.worldScale;
+        FVector end{dr.origin.x + dir[0] * distUu, dr.origin.y + dir[1] * distUu,
+                    dr.origin.z + dir[2] * distUu};
+        FVector at{};
+        if (surface_hit(dr.origin, end, &at)) {
+            game_point_to_xr(ctx, at, dc.posXr);
+            dc.valid = true;
+        }
 
         // The inverse is only worth trusting if it round-trips. Check it ONCE
         // against the forward map on real data and say so in words - a

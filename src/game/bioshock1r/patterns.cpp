@@ -140,6 +140,7 @@ void apply_gog_addresses() {
     kFgSceneNodeVtableRva = 0xDC1B14;
     kXInputGetStateIatRva = 0xBC6A7C;
     kXInputSetStateIatRva = 0xBC6A80;
+    kLineCheckVtblOffset = 0x168;
     kHkTlsSlotRva = 0x117EC84;
     kHkRemoveRefRva = 0x60E630;
     kHkCapsuleCtorRva = 0x7F6B20;

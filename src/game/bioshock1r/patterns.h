@@ -408,6 +408,14 @@ inline uint32_t kHkQueueKeyframeRva = 0;
 inline uint32_t kHavokActorVtableRva = 0;
 inline constexpr uint32_t kActorLevelOffset = 0xFC;
 inline constexpr uint32_t kLevelHavokOffset = 0x427C;
+// ULevel::SingleLineCheck, by vtable slot. 0 where the slot has not been derived.
+inline uint32_t kLineCheckVtblOffset = 0;
+inline constexpr uint32_t kLineCheckFlags = 0x800BF; // BSP, world geometry, pawns, blockers
+inline constexpr uint32_t kCheckResultBytes = 0x40;
+inline constexpr uint32_t kCheckResultActorOffset = 0x04;
+inline constexpr uint32_t kCheckResultLocationOffset = 0x08;
+inline constexpr uint32_t kCheckResultTimeOffset = 0x24;
+inline constexpr uint32_t kCheckResultItemOffset = 0x28;
 inline constexpr uint32_t kHavokWorldOffset = 0x24;
 inline constexpr uint32_t kHkWorldCriticalLockOffset = 0x8C;
 inline constexpr uint32_t kHkRefCountOffset = 6;
