@@ -22,6 +22,7 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
+#include "core/input/xinput_bridge.h"
 #include "core/vr/openxr_input.h"
 
 #include <imgui.h>
@@ -155,6 +156,26 @@ std::atomic<float> g_hudUpM{-0.10f};
 std::atomic<bool> g_hudOnWrist{false}; // off: the head-locked quad every game has today
 constexpr float kHudWristWidthM = 0.20f;
 std::atomic<uint32_t> g_hudFramesSubmitted{0};
+
+// The wrist suits the always-on bars. Anything more - a wheel, a menu, a hint -
+// has to be read, so the HUD comes back into view. Measured at the Nexus: 81 draws
+// normally, 137-147 with a wheel open. The baseline follows the loadout, slowly
+// enough that a hint stands out; a held bumper covers a long wheel.
+bool hud_needs_view() {
+    constexpr float kExtraDraws = 25.0f;
+    constexpr float kBaselineRise = 0.05f; // per frame
+    constexpr uint64_t kLingerMs = 500;
+    static float s_baseline = 0.0f;
+    static uint64_t s_untilMs = 0;
+    const float draws = static_cast<float>(bvr::hud::last_interval_draws());
+    if (draws > 0.0f)
+        s_baseline = (s_baseline == 0.0f || draws < s_baseline) ? draws : s_baseline + kBaselineRise;
+    bool lb = false, rb = false;
+    bvr::input::last_composed_bumpers(&lb, &rb);
+    const uint64_t now = GetTickCount64();
+    if (lb || rb || draws > s_baseline + kExtraDraws) s_untilMs = now + kLingerMs;
+    return now < s_untilMs;
+}
 std::atomic<bool> g_loggedFirstHudQuad{false};
 // s52: the HUD quad's texture provider (Infinite's GFx lane). Null = BS1's
 // bvr::hud::texture() path, byte-identical for games that never set it.
@@ -4022,7 +4043,7 @@ void on_present_end(IDXGISwapChain* swapchain) {
                     hudQuad.pose.position = {0.0f, g_hudUpM.load(std::memory_order_relaxed),
                                              -g_hudDistM.load(std::memory_order_relaxed)};
                     float w = g_hudWidthM.load(std::memory_order_relaxed);
-                    XrSpace wrist = g_hudOnWrist.load(std::memory_order_relaxed)
+                    XrSpace wrist = g_hudOnWrist.load(std::memory_order_relaxed) && !hud_needs_view()
                                         ? left_grip_space()
                                         : XR_NULL_HANDLE;
                     XrSpaceLocation grip{XR_TYPE_SPACE_LOCATION};

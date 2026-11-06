@@ -224,6 +224,8 @@ void set_dump_on_edge(int edge, int count);
 void get_dump_on_edge(int* edge, int* count);
 
 // Telemetry for `vrhud status` (per second, reset on read... no - lifetime).
+// HUD draws in the last present interval that had any. A wheel or menu nearly doubles it.
+unsigned last_interval_draws();
 void get_counters(unsigned* hudDraws, unsigned* redirects, unsigned* leaks,
                   unsigned* intervalsWithHud);
 

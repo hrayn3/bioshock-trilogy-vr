@@ -71,6 +71,8 @@ bool g_hadHudLastInterval = false;
 
 // Lifetime counters.
 std::atomic<unsigned> g_cHudDraws{0}, g_cRedirects{0}, g_cLeaks{0}, g_cIntervals{0};
+unsigned g_drawsThisInterval = 0;
+std::atomic<unsigned> g_lastIntervalDraws{0};
 
 // ---- Session 22: live rendered-FOV watch (see hud_capture.h) ----------------
 // Staging buffer of kFovSlots x 80 bytes: through one present interval, each
@@ -1376,6 +1378,7 @@ DrawDecision on_draw(ID3D11DeviceContext* ctx, UINT vertexCount) {
 
     // A non-indexed draw on the HUD target after the tonemap = gameswf.
     g_cHudDraws.fetch_add(1, std::memory_order_relaxed);
+    ++g_drawsThisInterval;
     g_hudThisInterval = true;
     if (!armed()) return pass_verdict(ctx, kRouteUnarmed);
     if (!ensure_rt(ctx, g_curW, g_curH, g_curFmt)) return pass_verdict(ctx, kRouteUnarmed);
@@ -1448,6 +1451,8 @@ void on_present(ID3D11DeviceContext* ctx, IDXGISwapChain* swapchain) {
             ctx->ClearDepthStencilView(g_dsv, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL,
                                        1.0f, 0);
     }
+    if (g_hudThisInterval) g_lastIntervalDraws.store(g_drawsThisInterval, std::memory_order_relaxed);
+    g_drawsThisInterval = 0;
     g_hudThisInterval = false;
     g_processedThisInterval = false;
     g_hudTarget = nullptr;
@@ -1498,6 +1503,8 @@ void set_force(bool on) {
 }
 
 bool force() { return g_force.load(std::memory_order_relaxed); }
+
+unsigned last_interval_draws() { return g_lastIntervalDraws.load(std::memory_order_relaxed); }
 
 void get_counters(unsigned* hudDraws, unsigned* redirects, unsigned* leaks,
                   unsigned* intervalsWithHud) {
