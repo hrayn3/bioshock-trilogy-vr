@@ -11869,3 +11869,8 @@ HUD now pins to the left wrist: captured in the simulator, not yet seen in the h
 Next: headset check of the wrist HUD, custom HUD with hints in view, plasmid-only reticle on surfaces
 (`ULevel::SingleLineCheck` at RVA 0x32B9E0, vcall +0x168, static read only), reload flick,
 minor telekinesis, wrench swing following the hand.
+
+Later the same day. In the headset and accepted: wrist HUD with wheels and hints returning to view, plasmid dot
+on surfaces, ammo flick, wheel flick. Built, simulator only: tremor smoothing rated by nobody yet, reload flick,
+free-hand grip telekinesis, melee hits from the hand. Open: alternate-eye starts at 36 before reaching 72, black
+boxes behind HUD vials, a custom HUD.

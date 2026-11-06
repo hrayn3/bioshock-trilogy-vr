@@ -54,3 +54,16 @@ axes (bone 44 is not obviously the barrel on those) look right.
 Tools: `vrphys status|near [loose]|sweep <n>|watch|park on|off|on|off`.
 
 Addresses are in ENGINE_NOTES, "Havok on the GOG build".
+
+## Minor telekinesis (2026-11-06)
+
+The grip on the free hand pulls the nearest loose body within 1.5 m and under 80 kg, hovers it 35 cm
+in front of that hand, and letting go throws it with the hand's motion. The grip stops being a bumper
+in gameplay; the trigger on that hand still switches to it. `vrphys tk [off|reach <m>]`.
+
+It copies the hold loop of the game's Telekinesis (0xE8980) but sets velocity directly each step.
+It leaves out `TelekinesisCollisionDamageListener`, so thrown props do no extra damage (Hugh's call).
+Calling the plasmid's own controller is not practical: it reads ability state and the pawn's view.
+
+Simulator, GOG: a corpse bone flew 46 m at the speed cap and held 0.35-0.42 m from the hand; release,
+a save load and exit were clean. Not yet tried in the headset.

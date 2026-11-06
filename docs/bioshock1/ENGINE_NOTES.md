@@ -3532,6 +3532,23 @@ the bone drive and `vrbones meleehold` cannot move the hit. This corrects the se
 session-30 wording above.
 
 World: `pawn+0xFC` level, `+0x427C` Havok wrapper, `+0x24` hkpWorld. Scale UU x 0.02, no axis flip.
+
+Moving a loose body (static reads; the marked ones exercised live): activate 0x6C04C0 (live), ecx=body.
+Motion at body+0xE0: vtable +0x40 setLinearVelocity (live), +0x44 setAngularVelocity (live), arg is an
+aligned hkVector4 in Havok units. Mass 0x6D0300 (live). Angular velocity at body+0x1C0 (live). Props at
+body+0x7C, count +0x80, 16-byte entries, key +0, value +8 (live). `actor+0x41C` then `+0x40` is set on
+every physics actor, so it does not identify a ragdoll.
+
+Line check: ULevel vtable +0x168 is SingleLineCheck (0x32B9E0), thiscall, ret 0x1C: FCheckResult*, source,
+const FVector* end, const FVector* start, flags, const FVector* extent, 0. Returns 1 on no hit. FCheckResult
+is 0x40 bytes: Actor +4, Location +8, Normal +0x14, Time +0x24, Item +0x28. Flags 0x800BF. Live.
+
+Melee: tick 0x70BC0 passes the hit box pose to 0x70570 (thiscall, ret 0xC: collector, FMatrix* in UU, FVector*
+extents) and the view to 0x6FAF0 (ret 0xC: collector, FVector*, FRotator*). Both are hooked to use the
+right hand's ray for the wrench. Hooks run live; whether hits land right needs the headset.
+
+D3D multithread protection rewrites the function table inside the context (ctx+4), so inline hooks on the
+old entries stop firing. Hooking the protected entries, inline or in the table, crashed or missed draws.
 Stepped inside `ULevel::Tick` with 0 worker threads, so CalcView is outside the step.
 
 | Item | RVA | Notes |
