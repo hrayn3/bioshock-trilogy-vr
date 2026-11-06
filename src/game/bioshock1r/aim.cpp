@@ -217,7 +217,7 @@ void __fastcall MeleeViewDetour(void* self, void* edx, void* collector, void* ca
 // natives; the hit samples and the script's wait both follow the animation, so its
 // playback rate is the swing speed. Applied to the hands' animation just after a
 // swing fired, so equips and idles keep their own speed.
-std::atomic<float> g_swingRate{2.0f};
+std::atomic<float> g_swingRate{3.0f};
 std::atomic<uint32_t> g_swingPlays{0};
 std::atomic<uint32_t> g_swingRated{0};
 constexpr uint64_t kSwingRateWindowMs = 350;
@@ -427,6 +427,7 @@ bool surface_hit(const FVector& start, const FVector& end, FVector* at, void** a
 // the cone is untouched. The enemy walk is the one AController::PickTarget does.
 std::atomic<bool> g_magnet{true};
 std::atomic<float> g_magnetDeg{6.0f};
+std::atomic<bool> g_magnetLos{true}; // `vraim magnet los|nolos`, a test lever
 std::atomic<uint32_t> g_magnetBends{0};
 constexpr float kMagnetRangeUu = 3000.0f;
 constexpr float kMagnetBodyLowUu = 30.0f;  // below the pawn's origin
@@ -495,7 +496,8 @@ void* magnet_bend(const FVector& o, FRotator* r, float* offDeg) {
                     FVector at{o.x + v[0], o.y + v[1], o.z + v[2]};
                     FVector hit{};
                     void* hitActor = nullptr;
-                    bool blocked = surface_hit(o, at, &hit, &hitActor) && hitActor != pawn;
+                    bool blocked = g_magnetLos.load(std::memory_order_relaxed) &&
+                                   surface_hit(o, at, &hit, &hitActor) && hitActor != pawn;
                     if (blocked) {
                         float hx = hit.x - o.x, hy = hit.y - o.y, hz = hit.z - o.z;
                         blocked = sqrtf(hx * hx + hy * hy + hz * hz) < len - 60.0f;
@@ -1883,6 +1885,8 @@ void handle_command(const char* args) {
         float deg = 0.0f;
         if (strcmp(arg, "on") == 0) g_magnet.store(true);
         else if (strcmp(arg, "off") == 0) g_magnet.store(false);
+        else if (strcmp(arg, "los") == 0) g_magnetLos.store(true);
+        else if (strcmp(arg, "nolos") == 0) g_magnetLos.store(false);
         else if (sscanf_s(arg, "%f", &deg) == 1 && deg > 0.0f) g_magnetDeg.store(deg);
         magnet_list(g_ray[1].origin, g_ray[1].rot);
     } else if (strcmp(verb, "swingrate") == 0) {
